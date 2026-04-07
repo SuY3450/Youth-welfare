@@ -12,7 +12,7 @@ export default function HomeScreen() {
       "기본 정보를 입력할까요?",
       [
         { text: "취소", style: "cancel" },
-        { text: "확인", onPress: () => router.push('/input') }
+        { text: "확인", onPress: () => router.push('/input') } // input.tsx로 이동
       ]
     );
   };
@@ -21,15 +21,12 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.container}>
       <StatusBar style="dark" />
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        
-        {/* 로고 아이콘 */}
         <View style={styles.logoContainer}>
           <View style={styles.iconBackground}>
             <Text style={{ fontSize: 40 }}>🎯</Text>
           </View>
         </View>
 
-        {/* 타이틀 */}
         <View style={styles.titleArea}>
           <Text style={styles.mainTitle}>나에게 딱 맞는{"\n"}청년 지원사업</Text>
           <Text style={styles.subTitle}>
@@ -37,7 +34,6 @@ export default function HomeScreen() {
           </Text>
         </View>
 
-        {/* 가이드 카드 리스트 */}
         <View style={styles.contentArea}>
           <View style={styles.guideCard}>
             <View style={[styles.cardIconBackground, { backgroundColor: '#E8F5E9' }]}>
@@ -70,11 +66,7 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* 시작하기 버튼 */}
-        <TouchableOpacity 
-          style={styles.startButton}
-          onPress={handleStart}
-        >
+        <TouchableOpacity style={styles.startButton} onPress={handleStart}>
           <Text style={styles.buttonText}>시작하기 →</Text>
         </TouchableOpacity>
       </ScrollView>
