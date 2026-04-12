@@ -1,20 +1,24 @@
 import { Feather, Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Animated, Easing, SafeAreaView, StyleSheet, Text, View } from 'react-native';
 
 export default function LoadingScreen() {
+  const router = useRouter();
+
   // 체크리스트 상태 (나중에 실제 로직과 연결 가능)
   const [steps, setSteps] = useState([
-    { id: 1, text: '정책 데이터베이스 검색 중...', completed: true },
-    { id: 2, text: '자격 조건 매칭 중...', completed: true },
-    { id: 3, text: '중복 수혜 분석 중...', completed: true },
-    { id: 4, text: '최적 조합 계산 중...', completed: true },
+    { id: 1, text: '정책 데이터베이스 검색 중...', completed: false },
+    { id: 2, text: '자격 조건 매칭 중...', completed: false },
+    { id: 3, text: '중복 수혜 분석 중...', completed: false },
+    { id: 4, text: '최적 조합 계산 중...', completed: false },
   ]);
 
   // 중앙 원 애니메이션 (빙글빙글 도는 효과)
   const spinValue = new Animated.Value(0);
 
   useEffect(() => {
+    // 스피너 애니메이션
     Animated.loop(
       Animated.timing(spinValue, {
         toValue: 1,
@@ -23,6 +27,18 @@ export default function LoadingScreen() {
         useNativeDriver: true,
       })
     ).start();
+
+    // 체크리스트 순서대로 완료 표시
+    const timers = [
+      setTimeout(() => setSteps(s => s.map((item, i) => i === 0 ? { ...item, completed: true } : item)), 600),
+      setTimeout(() => setSteps(s => s.map((item, i) => i === 1 ? { ...item, completed: true } : item)), 1200),
+      setTimeout(() => setSteps(s => s.map((item, i) => i === 2 ? { ...item, completed: true } : item)), 1800),
+      setTimeout(() => setSteps(s => s.map((item, i) => i === 3 ? { ...item, completed: true } : item)), 2400),
+      // 모든 분석 완료 후 결과 화면으로 이동
+      setTimeout(() => router.push('/result'), 3200),
+    ];
+
+    return () => timers.forEach(clearTimeout);
   }, []);
 
   const spin = spinValue.interpolate({
