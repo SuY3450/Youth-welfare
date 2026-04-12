@@ -1,20 +1,13 @@
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React from 'react';
-import { Alert, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 export default function HomeScreen() {
   const router = useRouter();
 
   const handleStart = () => {
-    Alert.alert(
-      "알림",
-      "기본 정보를 입력할까요?",
-      [
-        { text: "취소", style: "cancel" },
-        { text: "확인", onPress: () => router.push('/input') } // input.tsx로 이동
-      ]
-    );
+    router.push('/input');
   };
 
   return (

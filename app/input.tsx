@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
-import { Alert, FlatList, Modal, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { FlatList, Modal, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 const cityList = ['서울특별시', '경기도'];
 const districts: { [key: string]: string[] } = {
@@ -49,10 +49,7 @@ export default function InputScreen() {
   const [modalType, setModalType] = useState<string | null>(null);
 
   const handleNextStep = () => {
-    Alert.alert("알림", "관심 분야를 선택해볼까요?", [
-      { text: "취소", style: "cancel" },
-      { text: "확인", onPress: () => router.push('/InternetScreen') } // InternetScreen.js로 이동
-    ]);
+    router.push('/InternetScreen');
   };
 
   return (

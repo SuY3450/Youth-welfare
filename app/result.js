@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 // 복지 카드 데이터
 const welfareList = [
@@ -50,7 +51,7 @@ export default function ResultScreen() {
   const router = useRouter();
 
   return (
-    <SafeAreaView style={styles.wrap}>
+    <SafeAreaView style={styles.wrap} edges={['top']}>
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
 
         {/* 제목 */}
@@ -134,8 +135,8 @@ export default function ResultScreen() {
           <Text style={styles.tabText}>일정</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.tabItem} onPress={() => router.push('/mypage')}>
-          <Ionicons name="ellipse-outline" size={24} color="#999" />
-          <Text style={styles.tabText}>마이</Text>
+          <Ionicons name="person-circle" size={24} color="#999" />
+          <Text style={[styles.tabText, { color: '#999' }]}>마이</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>

@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { Alert, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 const interestData = [
   { id: 'central', label: '중앙부처', emoji: '🤝' },
@@ -14,9 +14,7 @@ export default function InternetScreen() {
   const router = useRouter();
 
   const handleStartMatching = () => {
-    Alert.alert("분석 시작", "'주거' 분야 맞춤 정책을 분석합니다!", [
-      { text: "확인", onPress: () => router.push('/loading') } // loading.js로 이동
-    ]);
+    router.push('/loading');
   };
 
   return (
@@ -28,7 +26,7 @@ export default function InternetScreen() {
         </View>
         <View style={styles.progressBarBg}><View style={styles.progressBarFill} /></View>
 
-        <Text style={styles.subTitle}>받고 싶은 지원 분야를 선택해주세요 (복수 선택)</Text>
+        <Text style={styles.subTitle}>받고 싶은 지원 분야를 선택해주세요 (복수 선택 가능)</Text>
 
         <View style={styles.grid}>
           {interestData.map((item) => {

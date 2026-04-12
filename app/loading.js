@@ -1,4 +1,4 @@
-import { Feather, Ionicons } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Animated, Easing, SafeAreaView, StyleSheet, Text, View } from 'react-native';
@@ -76,28 +76,13 @@ export default function LoadingScreen() {
         </View>
       </View>
 
-      {/* 하단 탭바 (더미) */}
-      <View style={styles.bottomTab}>
-        <View style={styles.tabItem}>
-          <Ionicons name="home-outline" size={24} color="#67B292" />
-          <Text style={[styles.tabText, { color: '#67B292' }]}>홈</Text>
-        </View>
-        <View style={styles.tabItem}>
-          <Ionicons name="grid-outline" size={24} color="#999" />
-          <Text style={styles.tabText}>일정</Text>
-        </View>
-        <View style={styles.tabItem}>
-          <Ionicons name="ellipse-outline" size={24} color="#999" />
-          <Text style={styles.tabText}>마이</Text>
-        </View>
-      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F7FDFB' },
-  content: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingBottom: 100 },
+  content: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   
   // 로더 스타일
   loaderContainer: { justifyContent: 'center', alignItems: 'center', marginBottom: 40 },
@@ -127,15 +112,4 @@ const styles = StyleSheet.create({
   checkIcon: { marginRight: 10 },
   listText: { fontSize: 16, color: '#67B292', fontWeight: '500' },
 
-  // 하단 탭바 스타일
-  bottomTab: {
-    flexDirection: 'row',
-    height: 80,
-    backgroundColor: '#FFF',
-    borderTopWidth: 1,
-    borderTopColor: '#EEE',
-    paddingBottom: 20,
-  },
-  tabItem: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  tabText: { fontSize: 12, marginTop: 4, color: '#999', fontWeight: '600' },
 });

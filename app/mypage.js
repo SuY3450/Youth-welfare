@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { SafeAreaView, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { useState } from 'react';
 
 export default function MyPageScreen() {
@@ -8,7 +9,7 @@ export default function MyPageScreen() {
   const [alarmEnabled, setAlarmEnabled] = useState(true);
 
   return (
-    <SafeAreaView style={styles.wrap}>
+    <SafeAreaView style={styles.wrap} edges={['top']}>
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
 
         {/* 제목 */}
