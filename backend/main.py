@@ -1,6 +1,10 @@
-from fastapi import FastAPI
+from uuid import UUID
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from sqlalchemy.orm import Session
+from database import SessionLocal
+from models import UserProfile
+from schemas import InterestInput, UserInput
 
 app = FastAPI()
 
@@ -12,30 +16,99 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class UserInput(BaseModel):
-    age: str
-    city: str
-    district: str
-    income: str
-    jobStatus: str
-    education: str
-
-class InterestInput(BaseModel):
-    interests: list[str]
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 @app.get("/")
 def root():
     return {"message": "서버 작동 중!"}
 
 @app.post("/input")
-def receive_input(data: UserInput):
-    print(f"받은 데이터: {data}")
-    return {"status": "success", "data": data}
+def receive_input(data: UserInput, db: Session = Depends(get_db)):
+    new_profile = UserProfile(
+        age=data.age,
+        city=data.city,
+        district=data.district,
+        income=data.income,
+        job_status=data.jobStatus,
+        education=data.education,
+    )
+    db.add(new_profile)
+    db.commit()
+    db.refresh(new_profile)
+    return {
+        "status": "success",
+        "message": "온보딩 정보 저장 완료",
+        "profile_id": str(new_profile.id),
+        "data": {
+            "age": new_profile.age,
+            "city": new_profile.city,
+            "district": new_profile.district,
+            "income": new_profile.income,
+            "jobStatus": new_profile.job_status,
+            "education": new_profile.education,
+            "interests": new_profile.interests,
+        },
+    }
 
 @app.post("/interest")
-def receive_interest(data: InterestInput):
-    print(f"받은 관심분야: {data.interests}")
-    return {"status": "success", "data": data}
+def receive_interest(data: InterestInput, db: Session = Depends(get_db)):
+    try:
+        profile_uuid = UUID(data.profile_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="profile_id 형식이 올바르지 않습니다.")
+    profile = db.query(UserProfile).filter(UserProfile.id == profile_uuid).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="해당 프로필을 찾을 수 없습니다.")
+    profile.interests = ",".join(data.interests)
+    db.commit()
+    db.refresh(profile)
+    return {
+        "status": "success",
+        "message": "관심분야 저장 완료",
+        "profile_id": str(profile.id),
+        "interests": profile.interests.split(",") if profile.interests else [],
+    }
+
+@app.get("/profile/{profile_id}")
+def get_profile_by_id(profile_id: str, db: Session = Depends(get_db)):
+    try:
+        profile_uuid = UUID(profile_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="profile_id 형식이 올바르지 않습니다.")
+    profile = db.query(UserProfile).filter(UserProfile.id == profile_uuid).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="해당 프로필을 찾을 수 없습니다.")
+    return {
+        "id": str(profile.id),
+        "age": profile.age,
+        "city": profile.city,
+        "district": profile.district,
+        "income": profile.income,
+        "jobStatus": profile.job_status,
+        "education": profile.education,
+        "interests": profile.interests.split(",") if profile.interests else [],
+    }
+
+@app.get("/profile")
+def get_latest_profile(db: Session = Depends(get_db)):
+    profile = db.query(UserProfile).order_by(UserProfile.created_at.desc()).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="저장된 프로필이 없습니다.")
+    return {
+        "id": str(profile.id),
+        "age": profile.age,
+        "city": profile.city,
+        "district": profile.district,
+        "income": profile.income,
+        "jobStatus": profile.job_status,
+        "education": profile.education,
+        "interests": profile.interests.split(",") if profile.interests else [],
+    }
 
 @app.get("/result")
 def get_result():
@@ -82,16 +155,4 @@ def get_result():
                 "warning": None,
             },
         ]
-    }
-
-@app.get("/profile")
-def get_profile():
-    return {
-        "name": "홍길동",
-        "age": "27",
-        "city": "서울특별시",
-        "district": "마포구",
-        "income": "50~100% 이하",
-        "jobStatus": "구직",
-        "education": "대학 졸업",
     }

@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import { FlatList, Modal, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { API_URL } from '../constants/api';
 
 const cityList = ['서울특별시', '경기도'];
 const districts: { [key: string]: string[] } = {
@@ -23,15 +24,15 @@ const SelectorModal = ({ visible, title, data, onSelect, onClose }: SelectorProp
     <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={onClose}>
       <View style={styles.modalContent}>
         <Text style={styles.modalTitle}>{title}</Text>
-        <FlatList 
-          data={data} 
-          keyExtractor={(item) => item} 
+        <FlatList
+          data={data}
+          keyExtractor={(item) => item}
           renderItem={({ item }) => (
             <TouchableOpacity style={styles.modalItem} onPress={() => onSelect(item)}>
               <Text style={styles.modalItemText}>{item}</Text>
             </TouchableOpacity>
-          )} 
-          style={{ maxHeight: 350 }} 
+          )}
+          style={{ maxHeight: 350 }}
         />
       </View>
     </TouchableOpacity>
@@ -39,7 +40,7 @@ const SelectorModal = ({ visible, title, data, onSelect, onClose }: SelectorProp
 );
 
 export default function InputScreen() {
-  const router = useRouter(); 
+  const router = useRouter();
   const [age, setAge] = useState('27');
   const [selectedCity, setSelectedCity] = useState('서울특별시');
   const [selectedDistrict, setSelectedDistrict] = useState('마포구');
@@ -48,8 +49,26 @@ export default function InputScreen() {
   const [education, setEducation] = useState('대학 졸업');
   const [modalType, setModalType] = useState<string | null>(null);
 
-  const handleNextStep = () => {
-    router.push('/InternetScreen');
+  
+  const handleNextStep = async () => {
+    try {
+      const response = await fetch(`${API_URL}/input`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          age: parseInt(age),
+          city: selectedCity,
+          district: selectedDistrict,
+          income: income,
+          jobStatus: jobStatus,
+          education: education,
+        }),
+      });
+      const data = await response.json();
+      router.push({ pathname: '/InternetScreen', params: { profile_id: data.profile_id } });
+    } catch (error) {
+      console.error('오류:', error);
+    }
   };
 
   return (

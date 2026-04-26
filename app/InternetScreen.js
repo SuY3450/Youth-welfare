@@ -1,5 +1,7 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useState } from 'react';
 import { SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { API_URL } from '../constants/api';
 
 const interestData = [
   { id: 'central', label: '중앙부처', emoji: '🤝' },
@@ -12,10 +14,35 @@ const interestData = [
 
 export default function InternetScreen() {
   const router = useRouter();
+  const { profile_id } = useLocalSearchParams();
+  const [selectedIds, setSelectedIds] = useState([]);
 
-  const handleStartMatching = () => {
-    router.push('/loading');
+  const toggleInterest = (id) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+    );
   };
+
+  const handleStartMatching = async () => {
+    try {
+      await fetch(`${API_URL}/interest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profile_id: profile_id,
+          interests: selectedIds,
+        }),
+      });
+      router.push({ pathname: '/loading', params: { profile_id } });
+    } catch (error) {
+      console.error('오류:', error);
+    }
+  };
+
+  const selectedLabels = interestData
+    .filter((item) => selectedIds.includes(item.id))
+    .map((item) => item.label)
+    .join(', ');
 
   return (
     <SafeAreaView style={styles.container}>
@@ -30,13 +57,13 @@ export default function InternetScreen() {
 
         <View style={styles.grid}>
           {interestData.map((item) => {
-            const isSelected = item.id === 'housing'; 
+            const isSelected = selectedIds.includes(item.id);
             return (
-              <TouchableOpacity 
-                key={item.id} 
-                style={[styles.card, isSelected && styles.activeCard]} 
-                onPress={() => {}} 
-                activeOpacity={isSelected ? 0.7 : 1}
+              <TouchableOpacity
+                key={item.id}
+                style={[styles.card, isSelected && styles.activeCard]}
+                onPress={() => toggleInterest(item.id)}
+                activeOpacity={0.7}
               >
                 <Text style={styles.emoji}>{item.emoji}</Text>
                 <Text style={[styles.cardLabel, isSelected && styles.activeCardLabel]}>{item.label}</Text>
@@ -46,10 +73,11 @@ export default function InternetScreen() {
         </View>
       </ScrollView>
 
-      {/* 하단 고정 영역 (핀 요약 박스 + 버튼) */}
       <View style={styles.bottomFixedArea}>
         <View style={styles.summaryBox}>
-          <Text style={styles.summaryText}>📌 선택한 분야: 주거</Text>
+          <Text style={styles.summaryText}>
+            📌 선택한 분야: {selectedLabels || '없음'}
+          </Text>
         </View>
 
         <TouchableOpacity style={styles.nextButton} onPress={handleStartMatching}>
