@@ -7,7 +7,7 @@ export default function HomeScreen() {
   const router = useRouter();
 
   const handleStart = () => {
-    router.push('/input');
+    router.push('/login/login1');
   };
 
   return (
