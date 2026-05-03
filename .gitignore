@@ -50,3 +50,4 @@ constants/api.js
 __pycache__
 *.pyc
 
+constants/supabase.ts

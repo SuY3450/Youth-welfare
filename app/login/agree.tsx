@@ -1,19 +1,23 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
+  Alert,
   SafeAreaView, ScrollView,
   StyleSheet,
   Text, TouchableOpacity,
   View
 } from 'react-native';
+import { supabase } from '../../constants/supabase';
 
 export default function TermsScreen() {
   const router = useRouter();
+  const { email, password } = useLocalSearchParams();
   const [allChecked, setAllChecked] = useState(false);
   const [terms1, setTerms1] = useState(false);
   const [terms2, setTerms2] = useState(false);
   const [terms3, setTerms3] = useState(false);
   const [marketing, setMarketing] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const handleAllCheck = () => {
     const newValue = !allChecked;
@@ -25,6 +29,20 @@ export default function TermsScreen() {
   };
 
   const canComplete = terms1 && terms2 && terms3;
+
+  const handleSignUp = async () => {
+    setLoading(true);
+    const { error } = await supabase.auth.signUp({
+      email: email as string,
+      password: password as string,
+    });
+    setLoading(false);
+    if (error) {
+      Alert.alert('회원가입 실패', error.message);
+    } else {
+      router.push('/login/login1');
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -68,11 +86,11 @@ export default function TermsScreen() {
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.completeButton, !canComplete && styles.disabledButton]}
-          onPress={() => router.push('/login/login1')}
-          disabled={!canComplete}
+          style={[styles.completeButton, (!canComplete || loading) && styles.disabledButton]}
+          onPress={handleSignUp}
+          disabled={!canComplete || loading}
         >
-          <Text style={styles.completeButtonText}>가입 완료</Text>
+          <Text style={styles.completeButtonText}>{loading ? '처리 중...' : '가입 완료'}</Text>
         </TouchableOpacity>
 
         <View style={styles.loginRow}>

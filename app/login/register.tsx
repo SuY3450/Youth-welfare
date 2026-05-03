@@ -1,7 +1,6 @@
 import { useRouter } from 'expo-router';
 import React, { useRef, useState } from 'react';
 import {
-  Image,
   Keyboard,
   SafeAreaView, ScrollView,
   StyleSheet,
@@ -145,23 +144,12 @@ export default function RegisterScreen() {
             </View>
           </View>
 
-          <View style={styles.divider}>
-            <View style={styles.line} />
-            <Text style={styles.dividerText}>또는</Text>
-            <View style={styles.line} />
-          </View>
-
-          <TouchableOpacity style={styles.googleButton}>
-            <Image
-              source={require('../../assets/images/google-signin.png')}
-              style={styles.googleImage}
-              resizeMode="contain"
-            />
-          </TouchableOpacity>
-
           <TouchableOpacity
             style={[styles.nextButton, !canNext && styles.disabledButton]}
-            onPress={() => router.push('/login/agree')}
+            onPress={() => router.push({
+              pathname: '/login/agree',
+              params: { email, password }
+            })}
             disabled={!canNext}
           >
             <Text style={styles.nextButtonText}>다음 단계 →</Text>
@@ -196,11 +184,6 @@ const styles = StyleSheet.create({
   inputRowSuccess: { borderColor: '#1DB88E' },
   inputWithCheck: { flex: 1, padding: 12, fontSize: 14 },
   checkMark: { color: '#1DB88E', fontSize: 18, paddingRight: 12, fontWeight: 'bold' },
-  divider: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
-  line: { flex: 1, height: 1, backgroundColor: '#ddd' },
-  dividerText: { marginHorizontal: 8, color: '#999' },
-  googleButton: { alignItems: 'center', marginBottom: 24 },
-  googleImage: { width: 200, height: 44 },
   nextButton: { backgroundColor: '#1DB88E', borderRadius: 8, padding: 16, alignItems: 'center' },
   disabledButton: { backgroundColor: '#ccc' },
   nextButtonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },

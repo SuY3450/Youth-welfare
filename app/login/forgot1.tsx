@@ -1,14 +1,27 @@
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
-import { SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { supabase } from '../../constants/supabase';
 
 export default function Forgot1Screen() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const isValidEmail = (email: string) => {
     return /^[^\s@]+@[^\s@]+\.(com|net|org|co\.kr|kr)$/.test(email);
+  };
+
+  const handleSendCode = async () => {
+    setLoading(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(email);
+    setLoading(false);
+    if (error) {
+      Alert.alert('오류', '이메일 발송에 실패했습니다. 다시 시도해주세요.');
+    } else {
+      setSent(true);
+    }
   };
 
   return (
@@ -18,16 +31,8 @@ export default function Forgot1Screen() {
           <Text style={styles.back}>〈 로그인</Text>
         </TouchableOpacity>
 
-        <View style={styles.stepRow}>
-          <View style={styles.stepActive}><Text style={styles.stepActiveText}>1</Text></View>
-          <View style={styles.stepLine} />
-          <View style={styles.stepInactive}><Text style={styles.stepInactiveText}>2</Text></View>
-          <View style={styles.stepLine} />
-          <View style={styles.stepInactive}><Text style={styles.stepInactiveText}>3</Text></View>
-        </View>
-
         <Text style={styles.title}>비밀번호를 잊으셨나요?</Text>
-        <Text style={styles.subtitle}>가입하신 이메일을 입력하시면{'\n'}인증 코드를 보내드릴게요</Text>
+        <Text style={styles.subtitle}>가입하신 이메일을 입력하시면{'\n'}비밀번호 재설정 링크를 보내드릴게요</Text>
 
         <Text style={styles.label}>가입한 이메일 <Text style={styles.required}>*</Text></Text>
         <View style={styles.emailRow}>
@@ -39,23 +44,28 @@ export default function Forgot1Screen() {
             keyboardType="email-address"
           />
           <TouchableOpacity
-            style={[styles.sendButton, !isValidEmail(email) && styles.disabledButton]}
-            onPress={() => { if (isValidEmail(email)) setSent(true); }}
-            disabled={!isValidEmail(email)}
+            style={[styles.sendButton, (!isValidEmail(email) || loading) && styles.disabledButton]}
+            onPress={handleSendCode}
+            disabled={!isValidEmail(email) || loading}
           >
-            <Text style={styles.sendButtonText}>코드 발송</Text>
+            <Text style={styles.sendButtonText}>{loading ? '발송 중...' : '링크 발송'}</Text>
           </TouchableOpacity>
         </View>
-        {sent && <Text style={styles.sentText}>✓ {email}으로 코드가 발송됐어요</Text>}
+
+        {sent && (
+          <View style={styles.sentBox}>
+            <Text style={styles.sentText}>✓ {email}으로 비밀번호 재설정 링크를 보냈어요!</Text>
+            <Text style={styles.sentSubText}>이메일을 확인하고 링크를 클릭해주세요.</Text>
+          </View>
+        )}
 
         <View style={styles.spacer} />
 
         <TouchableOpacity
-          style={[styles.nextButton, !sent && styles.disabledButton]}
-          onPress={() => router.push('/login/forgot2')}
-          disabled={!sent}
+          style={[styles.backButton]}
+          onPress={() => router.push('/login/login1')}
         >
-          <Text style={styles.nextButtonText}>인증 코드 받기</Text>
+          <Text style={styles.backButtonText}>로그인으로 돌아가기</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -66,12 +76,6 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   content: { flex: 1, paddingHorizontal: 24, paddingTop: 20 },
   back: { color: '#333', marginBottom: 24, fontSize: 14 },
-  stepRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 32 },
-  stepActive: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#1DB88E', alignItems: 'center', justifyContent: 'center' },
-  stepActiveText: { color: '#fff', fontWeight: 'bold' },
-  stepInactive: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#eee', alignItems: 'center', justifyContent: 'center' },
-  stepInactiveText: { color: '#999' },
-  stepLine: { flex: 1, height: 2, backgroundColor: '#eee' },
   title: { fontSize: 22, fontWeight: 'bold', marginBottom: 8 },
   subtitle: { fontSize: 14, color: '#666', marginBottom: 24, lineHeight: 22 },
   label: { fontSize: 14, marginBottom: 6, color: '#333' },
@@ -81,8 +85,10 @@ const styles = StyleSheet.create({
   sendButton: { backgroundColor: '#1DB88E', borderRadius: 8, paddingHorizontal: 16, justifyContent: 'center' },
   disabledButton: { backgroundColor: '#ccc' },
   sendButtonText: { color: '#fff', fontWeight: 'bold' },
-  sentText: { color: '#1DB88E', fontSize: 12, marginBottom: 8 },
+  sentBox: { backgroundColor: '#E8F8F3', borderRadius: 8, padding: 14, marginTop: 8 },
+  sentText: { color: '#111', fontSize: 14, marginBottom: 4 },
+  sentSubText: { color: '#555', fontSize: 12 },
   spacer: { flex: 1 },
-  nextButton: { backgroundColor: '#1DB88E', borderRadius: 8, padding: 16, alignItems: 'center', marginBottom: 24 },
-  nextButtonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  backButton: { backgroundColor: '#1DB88E', borderRadius: 8, padding: 16, alignItems: 'center', marginBottom: 24 },
+  backButtonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
 });

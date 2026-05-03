@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { useState } from 'react';
+import { ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function MyPageScreen() {
   const router = useRouter();
@@ -109,7 +109,7 @@ export default function MyPageScreen() {
         </View>
 
         {/* 로그아웃 버튼 */}
-        <TouchableOpacity style={styles.logoutButton}>
+        <TouchableOpacity style={styles.logoutButton} onPress={() => router.push('/login/login1')}>
           <Text style={styles.logoutText}>로그아웃</Text>
         </TouchableOpacity>
 

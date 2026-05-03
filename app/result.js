@@ -1,54 +1,35 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-
-// 복지 카드 데이터
-const welfareList = [
-  {
-    id: 1,
-    rank: '1순위',
-    title: '청년 월세 한시 특별지원',
-    org: '국토교통부 · 전국',
-    tags: [
-      { label: '주거', type: 'green' },
-      { label: '자격 충족', type: 'green' },
-      { label: '마감 D-7', type: 'orange' },
-    ],
-    amount: '월 20만원',
-    period: '× 12개월',
-    warning: null,
-  },
-  {
-    id: 2,
-    rank: '2순위',
-    title: '청년도약계좌',
-    org: '금융위원회 · 전국',
-    tags: [
-      { label: '금융', type: 'green' },
-      { label: '자격 충족', type: 'green' },
-    ],
-    amount: '최대 5,000만원',
-    period: '5년 만기',
-    warning: '청년희망적금과 중복 가입 불가 → 도약계좌가 유리',
-  },
-  {
-    id: 3,
-    rank: '3순위',
-    title: '청년내일저축계좌',
-    org: '보건복지부 · 전국',
-    tags: [
-      { label: '금융', type: 'green' },
-      { label: '자격 충족', type: 'green' },
-    ],
-    amount: '최대 1,440만원',
-    period: '3년 만기',
-    warning: null,
-  },
-];
+import { API_URL } from '../constants/api';
 
 export default function ResultScreen() {
   const router = useRouter();
+  const [welfareList, setWelfareList] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`${API_URL}/result`)
+      .then(res => res.json())
+      .then(data => {
+        setWelfareList(data.results);
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error('결과 불러오기 실패:', err);
+        setLoading(false);
+      });
+  }, []);
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.wrap}>
+        <ActivityIndicator size="large" color="#00C49A" style={{ flex: 1 }} />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.wrap} edges={['top']}>
@@ -74,7 +55,7 @@ export default function ResultScreen() {
         </View>
 
         {/* 총 건수 */}
-        <Text style={styles.totalCount}>총 12건</Text>
+        <Text style={styles.totalCount}>총 {welfareList.length}건</Text>
 
         {/* 복지 카드 목록 */}
         {welfareList.map((item) => (

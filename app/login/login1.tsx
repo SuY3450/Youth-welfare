@@ -1,23 +1,39 @@
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
-  Image,
+  Alert,
   SafeAreaView,
   StyleSheet,
   Text, TextInput, TouchableOpacity,
   View
 } from 'react-native';
+import { supabase } from '../../constants/supabase';
 
 export default function LoginScreen() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const isValidEmail = (email: string) => {
     return /^[^\s@]+@[^\s@]+\.(com|net|org|co\.kr|kr)$/.test(email);
   };
 
   const canLogin = isValidEmail(email) && password.length > 0;
+
+  const handleLogin = async () => {
+    setLoading(true);
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+    setLoading(false);
+    if (error) {
+      Alert.alert('로그인 실패', '이메일 또는 비밀번호를 확인해주세요.');
+    } else {
+      router.push('/input');
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -50,25 +66,11 @@ export default function LoginScreen() {
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.loginButton, !canLogin && styles.disabledButton]}
-          onPress={() => router.push('/input')}
-          disabled={!canLogin}
+          style={[styles.loginButton, (!canLogin || loading) && styles.disabledButton]}
+          onPress={handleLogin}
+          disabled={!canLogin || loading}
         >
-          <Text style={styles.loginButtonText}>로그인</Text>
-        </TouchableOpacity>
-
-        <View style={styles.divider}>
-          <View style={styles.line} />
-          <Text style={styles.dividerText}>또는</Text>
-          <View style={styles.line} />
-        </View>
-
-        <TouchableOpacity style={styles.googleButton}>
-          <Image
-            source={require('../../assets/images/google-signin.png')}
-            style={styles.googleImage}
-            resizeMode="contain"
-          />
+          <Text style={styles.loginButtonText}>{loading ? '로그인 중...' : '로그인'}</Text>
         </TouchableOpacity>
 
         <View style={styles.registerContainer}>
@@ -94,11 +96,6 @@ const styles = StyleSheet.create({
   loginButton: { backgroundColor: '#1DB88E', borderRadius: 8, padding: 16, alignItems: 'center', marginBottom: 24 },
   disabledButton: { backgroundColor: '#ccc' },
   loginButtonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
-  divider: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
-  line: { flex: 1, height: 1, backgroundColor: '#ddd' },
-  dividerText: { marginHorizontal: 8, color: '#999' },
-  googleButton: { alignItems: 'center', marginBottom: 24 },
-  googleImage: { width: 200, height: 44 },
   registerContainer: { flexDirection: 'row', justifyContent: 'center' },
   registerText: { color: '#666' },
 });
