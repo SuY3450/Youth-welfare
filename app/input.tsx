@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
-import { FlatList, Modal, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, FlatList, Modal, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { API_URL } from '../constants/api';
+import { supabase } from '../constants/supabase';
 
 const cityList = ['서울특별시', '경기도'];
 const districts: { [key: string]: string[] } = {
@@ -51,10 +52,20 @@ export default function InputScreen() {
 
   
   const handleNextStep = async () => {
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError || !session) {
+      Alert.alert('로그인 필요', '다시 로그인해주세요.');
+      router.replace('/login/login1');
+      return;
+    }
+
     try {
       const response = await fetch(`${API_URL}/input`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
         body: JSON.stringify({
           age: parseInt(age),
           city: selectedCity,
@@ -64,10 +75,18 @@ export default function InputScreen() {
           education: education,
         }),
       });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        Alert.alert('저장 실패', errorData.detail || '서버 오류가 발생했습니다.');
+        return;
+      }
+
       const data = await response.json();
       router.push({ pathname: '/InternetScreen', params: { profile_id: data.profile_id } });
     } catch (error) {
       console.error('오류:', error);
+      Alert.alert('네트워크 오류', '백엔드 서버에 연결할 수 없습니다.');
     }
   };
 

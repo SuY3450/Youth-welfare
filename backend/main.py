@@ -1,10 +1,21 @@
+import os
 from uuid import UUID
-from fastapi import Depends, FastAPI, HTTPException
+
+import jwt
+from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+
 from database import SessionLocal
 from models import UserProfile
 from schemas import InterestInput, UserInput
+
+load_dotenv()
+
+JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
+if not JWT_SECRET:
+    raise RuntimeError("SUPABASE_JWT_SECRET 환경변수가 설정되지 않았습니다.")
 
 app = FastAPI()
 
@@ -23,45 +34,94 @@ def get_db():
     finally:
         db.close()
 
+
+def get_current_user_id(authorization: str = Header(None)) -> str:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="인증 토큰이 필요합니다.")
+
+    token = authorization.replace("Bearer ", "")
+    try:
+        payload = jwt.decode(
+            token,
+            JWT_SECRET,
+            algorithms=["HS256"],
+            audience="authenticated",
+        )
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="토큰이 만료되었습니다.")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="유효하지 않은 토큰입니다.")
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="토큰에서 사용자 정보를 찾을 수 없습니다.")
+    return user_id
+
 @app.get("/")
 def root():
     return {"message": "서버 작동 중!"}
 
 @app.post("/input")
-def receive_input(data: UserInput, db: Session = Depends(get_db)):
-    new_profile = UserProfile(
-        age=data.age,
-        city=data.city,
-        district=data.district,
-        income=data.income,
-        job_status=data.jobStatus,
-        education=data.education,
-    )
-    db.add(new_profile)
+def receive_input(
+    data: UserInput,
+    verified_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    try:
+        user_uuid = UUID(verified_user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="user_id 형식이 올바르지 않습니다.")
+
+    profile = db.query(UserProfile).filter(UserProfile.id == user_uuid).first()
+
+    if profile:
+        profile.age = data.age
+        profile.city = data.city
+        profile.district = data.district
+        profile.income = data.income
+        profile.job_status = data.jobStatus
+        profile.education = data.education
+    else:
+        profile = UserProfile(
+            id=user_uuid,
+            age=data.age,
+            city=data.city,
+            district=data.district,
+            income=data.income,
+            job_status=data.jobStatus,
+            education=data.education,
+        )
+        db.add(profile)
+
     db.commit()
-    db.refresh(new_profile)
+    db.refresh(profile)
     return {
         "status": "success",
         "message": "온보딩 정보 저장 완료",
-        "profile_id": str(new_profile.id),
+        "profile_id": str(profile.id),
         "data": {
-            "age": new_profile.age,
-            "city": new_profile.city,
-            "district": new_profile.district,
-            "income": new_profile.income,
-            "jobStatus": new_profile.job_status,
-            "education": new_profile.education,
-            "interests": new_profile.interests,
+            "age": profile.age,
+            "city": profile.city,
+            "district": profile.district,
+            "income": profile.income,
+            "jobStatus": profile.job_status,
+            "education": profile.education,
+            "interests": profile.interests,
         },
     }
 
 @app.post("/interest")
-def receive_interest(data: InterestInput, db: Session = Depends(get_db)):
+def receive_interest(
+    data: InterestInput,
+    verified_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
     try:
-        profile_uuid = UUID(data.profile_id)
+        user_uuid = UUID(verified_user_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="profile_id 형식이 올바르지 않습니다.")
-    profile = db.query(UserProfile).filter(UserProfile.id == profile_uuid).first()
+        raise HTTPException(status_code=400, detail="user_id 형식이 올바르지 않습니다.")
+
+    profile = db.query(UserProfile).filter(UserProfile.id == user_uuid).first()
     if not profile:
         raise HTTPException(status_code=404, detail="해당 프로필을 찾을 수 없습니다.")
     profile.interests = ",".join(data.interests)
@@ -75,7 +135,14 @@ def receive_interest(data: InterestInput, db: Session = Depends(get_db)):
     }
 
 @app.get("/profile/{profile_id}")
-def get_profile_by_id(profile_id: str, db: Session = Depends(get_db)):
+def get_profile_by_id(
+    profile_id: str,
+    verified_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    if profile_id != verified_user_id:
+        raise HTTPException(status_code=403, detail="본인의 프로필만 조회할 수 있습니다.")
+
     try:
         profile_uuid = UUID(profile_id)
     except ValueError:
@@ -95,8 +162,16 @@ def get_profile_by_id(profile_id: str, db: Session = Depends(get_db)):
     }
 
 @app.get("/profile")
-def get_latest_profile(db: Session = Depends(get_db)):
-    profile = db.query(UserProfile).order_by(UserProfile.created_at.desc()).first()
+def get_my_profile(
+    verified_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    try:
+        user_uuid = UUID(verified_user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="user_id 형식이 올바르지 않습니다.")
+
+    profile = db.query(UserProfile).filter(UserProfile.id == user_uuid).first()
     if not profile:
         raise HTTPException(status_code=404, detail="저장된 프로필이 없습니다.")
     return {

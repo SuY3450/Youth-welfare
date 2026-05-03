@@ -13,5 +13,4 @@ class UserInput(BaseModel):
 
 
 class InterestInput(BaseModel):
-    profile_id: str
     interests: list[str]

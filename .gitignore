@@ -44,6 +44,7 @@ app-example
 /android
 
 # ngrok
+constants/api.ts
 constants/api.js
 
 .venv
