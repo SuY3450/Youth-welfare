@@ -5,6 +5,7 @@ import jwt
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from jwt import PyJWKClient
 from sqlalchemy.orm import Session
 
 from database import SessionLocal
@@ -13,9 +14,12 @@ from schemas import InterestInput, UserInput
 
 load_dotenv()
 
-JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
-if not JWT_SECRET:
-    raise RuntimeError("SUPABASE_JWT_SECRET 환경변수가 설정되지 않았습니다.")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+if not SUPABASE_URL:
+    raise RuntimeError("SUPABASE_URL 환경변수가 설정되지 않았습니다.")
+
+JWKS_URL = f"{SUPABASE_URL.rstrip('/')}/auth/v1/.well-known/jwks.json"
+jwks_client = PyJWKClient(JWKS_URL, cache_keys=True, lifespan=300)
 
 app = FastAPI()
 
@@ -41,16 +45,19 @@ def get_current_user_id(authorization: str = Header(None)) -> str:
 
     token = authorization.replace("Bearer ", "")
     try:
+        signing_key = jwks_client.get_signing_key_from_jwt(token)
         payload = jwt.decode(
             token,
-            JWT_SECRET,
-            algorithms=["HS256"],
+            signing_key.key,
+            algorithms=["ES256", "RS256", "EdDSA"],
             audience="authenticated",
         )
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="토큰이 만료되었습니다.")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="유효하지 않은 토큰입니다.")
+    except Exception:
+        raise HTTPException(status_code=401, detail="토큰 검증에 실패했습니다.")
 
     user_id = payload.get("sub")
     if not user_id:
