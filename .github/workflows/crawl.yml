@@ -1,4 +1,5 @@
 name: 온통청년 자동 크롤링
+
 on:
   schedule:
     - cron: '0 17 * * *'
@@ -27,11 +28,7 @@ jobs:
         run: python process/preprocess.py
 
       - name: ChromaDB 적재
-        run: |
-          python -c "
-          from db.chroma_client import load_to_chroma
-          load_to_chroma('data/clean/clean_final.json')
-          "
+        run: python run_chroma.py
 
       - name: JSON 백업 커밋
         run: |
