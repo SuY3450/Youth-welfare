@@ -2,8 +2,8 @@
 
 from pydantic import BaseModel
 
-
 class UserInput(BaseModel):
+    user_id: str
     age: int
     city: str
     district: str
@@ -11,6 +11,6 @@ class UserInput(BaseModel):
     jobStatus: str
     education: str
 
-
 class InterestInput(BaseModel):
+    profile_id: str
     interests: list[str]
