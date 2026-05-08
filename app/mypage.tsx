@@ -6,7 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function MyPageScreen() {
   const router = useRouter();
-  const [alarmEnabled, setAlarmEnabled] = useState(true);
+  const [alarmEnabled, setAlarmEnabled] = useState<boolean>(true);
 
   return (
     <SafeAreaView style={styles.wrap} edges={['top']}>

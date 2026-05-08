@@ -204,10 +204,10 @@ def get_result():
                 "tags": [
                     {"label": "주거", "type": "green"},
                     {"label": "자격 충족", "type": "green"},
-                    {"label": "마감 D-7", "type": "orange"},
+                    {"label": "마감 D-7", "type": "red"},
                 ],
                 "amount": "월 20만원",
-                "period": "× 12개월",
+                "period": "",
                 "warning": None,
             },
             {

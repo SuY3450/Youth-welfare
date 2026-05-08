@@ -1,24 +1,27 @@
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, SafeAreaView, StyleSheet, Text, View } from 'react-native';
+
+interface Step {
+  id: number;
+  text: string;
+  completed: boolean;
+}
 
 export default function LoadingScreen() {
   const router = useRouter();
 
-  // 체크리스트 상태 (나중에 실제 로직과 연결 가능)
-  const [steps, setSteps] = useState([
+  const [steps, setSteps] = useState<Step[]>([
     { id: 1, text: '정책 데이터베이스 검색 중...', completed: false },
     { id: 2, text: '자격 조건 매칭 중...', completed: false },
     { id: 3, text: '중복 수혜 분석 중...', completed: false },
     { id: 4, text: '최적 조합 계산 중...', completed: false },
   ]);
 
-  // 중앙 원 애니메이션 (빙글빙글 도는 효과)
-  const spinValue = new Animated.Value(0);
+  const spinValue = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    // 스피너 애니메이션
     Animated.loop(
       Animated.timing(spinValue, {
         toValue: 1,
@@ -28,13 +31,11 @@ export default function LoadingScreen() {
       })
     ).start();
 
-    // 체크리스트 순서대로 완료 표시
-    const timers = [
-      setTimeout(() => setSteps(s => s.map((item, i) => i === 0 ? { ...item, completed: true } : item)), 600),
-      setTimeout(() => setSteps(s => s.map((item, i) => i === 1 ? { ...item, completed: true } : item)), 1200),
-      setTimeout(() => setSteps(s => s.map((item, i) => i === 2 ? { ...item, completed: true } : item)), 1800),
-      setTimeout(() => setSteps(s => s.map((item, i) => i === 3 ? { ...item, completed: true } : item)), 2400),
-      // 모든 분석 완료 후 결과 화면으로 이동
+    const timers: ReturnType<typeof setTimeout>[] = [
+      setTimeout(() => setSteps((s) => s.map((item, i) => (i === 0 ? { ...item, completed: true } : item))), 600),
+      setTimeout(() => setSteps((s) => s.map((item, i) => (i === 1 ? { ...item, completed: true } : item))), 1200),
+      setTimeout(() => setSteps((s) => s.map((item, i) => (i === 2 ? { ...item, completed: true } : item))), 1800),
+      setTimeout(() => setSteps((s) => s.map((item, i) => (i === 3 ? { ...item, completed: true } : item))), 2400),
       setTimeout(() => router.push('/result'), 3200),
     ];
 
@@ -54,7 +55,7 @@ export default function LoadingScreen() {
           <Animated.View style={[styles.outerCircle, { transform: [{ rotate: spin }] }]}>
             <View style={styles.innerCircle} />
           </Animated.View>
-          {/* 중앙의 검은 원 (이미지처럼 표현) */}
+          {/* 중앙의 검은 원 */}
           <View style={styles.centerDot} />
         </View>
 
@@ -64,18 +65,17 @@ export default function LoadingScreen() {
         <View style={styles.listContainer}>
           {steps.map((step) => (
             <View key={step.id} style={styles.listItem}>
-              <Feather 
-                name="check" 
-                size={18} 
-                color={step.completed ? "#67B292" : "#DDD"} 
-                style={styles.checkIcon} 
+              <Feather
+                name="check"
+                size={18}
+                color={step.completed ? '#67B292' : '#DDD'}
+                style={styles.checkIcon}
               />
               <Text style={styles.listText}>{step.text}</Text>
             </View>
           ))}
         </View>
       </View>
-
     </SafeAreaView>
   );
 }
@@ -83,8 +83,7 @@ export default function LoadingScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F7FDFB' },
   content: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  
-  // 로더 스타일
+
   loaderContainer: { justifyContent: 'center', alignItems: 'center', marginBottom: 40 },
   outerCircle: {
     width: 120,
@@ -92,24 +91,23 @@ const styles = StyleSheet.create({
     borderRadius: 60,
     borderWidth: 4,
     borderColor: '#67B292',
-    borderTopColor: 'transparent', // 회전하는 느낌을 위해 한쪽을 투명하게
+    borderTopColor: 'transparent',
     justifyContent: 'center',
     alignItems: 'center',
   },
+  innerCircle: {},
   centerDot: {
     position: 'absolute',
     width: 90,
     height: 90,
     borderRadius: 45,
-    backgroundColor: '#111', // 이미지 속 검은 원
+    backgroundColor: '#111',
   },
 
   title: { fontSize: 24, fontWeight: '800', color: '#111', marginBottom: 35 },
 
-  // 리스트 스타일
   listContainer: { alignItems: 'flex-start' },
   listItem: { flexDirection: 'row', alignItems: 'center', marginBottom: 15 },
   checkIcon: { marginRight: 10 },
   listText: { fontSize: 16, color: '#67B292', fontWeight: '500' },
-
 });

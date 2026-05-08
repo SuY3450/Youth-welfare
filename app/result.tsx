@@ -5,19 +5,37 @@ import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { API_URL } from '../constants/api';
 
+type TagType = 'green' | 'orange' | 'red';
+
+interface WelfareTag {
+  label: string;
+  type: TagType;
+}
+
+interface WelfareItem {
+  id: number;
+  rank: string;
+  title: string;
+  org: string;
+  tags: WelfareTag[];
+  amount: string;
+  period: string;
+  warning: string | null;
+}
+
 export default function ResultScreen() {
   const router = useRouter();
-  const [welfareList, setWelfareList] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [welfareList, setWelfareList] = useState<WelfareItem[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
     fetch(`${API_URL}/result`)
-      .then(res => res.json())
-      .then(data => {
+      .then((res) => res.json())
+      .then((data: { results: WelfareItem[] }) => {
         setWelfareList(data.results);
         setLoading(false);
       })
-      .catch(err => {
+      .catch((err) => {
         console.error('결과 불러오기 실패:', err);
         setLoading(false);
       });
@@ -44,13 +62,15 @@ export default function ResultScreen() {
             <View style={styles.dot} />
             <Text style={styles.aiCardHeaderText}>AI 분석 완료</Text>
           </View>
-          <Text style={styles.aiCardDesc}>
-            주거·취업·금융 3개 분야에서 12개 사업이 매칭됐어요.{'\n'}
-            중복 불가 항목을 제외한 최적 조합을 추천드려요.
-          </Text>
-          <View style={styles.aiCardBottom}>
-            <Text style={styles.aiCardLabel}>예상 총 수혜 금액</Text>
-            <Text style={styles.aiCardAmount}>연간 최대 780만원</Text>
+          <View style={styles.aiCardBody}>
+            <View style={styles.aiCardBodyLeft}>
+              <Text style={styles.aiCardMainText}>주거·취업·금융 12개 매칭</Text>
+              <Text style={styles.aiCardSubText}>중복 불가 항목 자동 제외</Text>
+            </View>
+            <View style={styles.aiCardBodyRight}>
+              <Text style={styles.aiCardLabel}>예상 총 수혜</Text>
+              <Text style={styles.aiCardAmount}>연 780만원</Text>
+            </View>
           </View>
         </View>
 
@@ -68,16 +88,22 @@ export default function ResultScreen() {
                 <Text style={styles.cardSub}>{item.org}</Text>
                 {/* 태그 */}
                 <View style={styles.tagRow}>
-                  {item.tags.map((tag, index) => (
-                    <View
-                      key={index}
-                      style={[styles.tag, tag.type === 'orange' ? styles.tagOrange : styles.tagGreen]}
-                    >
-                      <Text style={tag.type === 'orange' ? styles.tagOrangeText : styles.tagGreenText}>
-                        {tag.label}
-                      </Text>
-                    </View>
-                  ))}
+                  {item.tags.map((tag, index) => {
+                    let tagStyle = styles.tagGreen;
+                    let tagTextStyle = styles.tagGreenText;
+                    if (tag.type === 'orange') {
+                      tagStyle = styles.tagOrange;
+                      tagTextStyle = styles.tagOrangeText;
+                    } else if (tag.type === 'red') {
+                      tagStyle = styles.tagRed;
+                      tagTextStyle = styles.tagRedText;
+                    }
+                    return (
+                      <View key={index} style={[styles.tag, tagStyle]}>
+                        <Text style={tagTextStyle}>{tag.label}</Text>
+                      </View>
+                    );
+                  })}
                 </View>
               </View>
               {/* 순위 뱃지 */}
@@ -89,15 +115,15 @@ export default function ResultScreen() {
             {/* 금액 박스 */}
             <View style={styles.amountBox}>
               <Text style={styles.amountText}>{item.amount}</Text>
-              <Text style={styles.amountSub}>{item.period}</Text>
-            </View>
+              {item.period ? <Text style={styles.amountSub}>{item.period}</Text> : null}
 
-            {/* 경고 메시지 */}
-            {item.warning && (
-              <View style={styles.warningBox}>
-                <Text style={styles.warningText}>⚠ {item.warning}</Text>
-              </View>
-            )}
+              {/* 경고 메시지 (금액 박스 안쪽) */}
+              {item.warning && (
+                <View style={styles.warningBox}>
+                  <Text style={styles.warningText}>⚠ {item.warning}</Text>
+                </View>
+              )}
+            </View>
 
           </View>
         ))}
@@ -116,7 +142,7 @@ export default function ResultScreen() {
           <Text style={styles.tabText}>일정</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.tabItem} onPress={() => router.push('/mypage')}>
-          <Ionicons name="person-circle" size={24} color="#999" />
+          <Ionicons name="person-circle-outline" size={24} color="#999" />
           <Text style={[styles.tabText, { color: '#999' }]}>마이</Text>
         </TouchableOpacity>
       </View>
@@ -133,13 +159,16 @@ const styles = StyleSheet.create({
 
   // AI 카드
   aiCard: { backgroundColor: '#00C49A', borderRadius: 16, padding: 18, marginBottom: 20 },
-  aiCardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  aiCardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff', marginRight: 6 },
   aiCardHeaderText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
-  aiCardDesc: { color: '#fff', fontSize: 14, lineHeight: 22, marginBottom: 14 },
-  aiCardBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  aiCardLabel: { color: '#d0f5ec', fontSize: 12 },
-  aiCardAmount: { color: '#fff', fontWeight: 'bold', fontSize: 18 },
+  aiCardBody: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
+  aiCardBodyLeft: { flex: 1 },
+  aiCardBodyRight: { alignItems: 'flex-end' },
+  aiCardMainText: { color: '#fff', fontSize: 16, fontWeight: 'bold', marginBottom: 4 },
+  aiCardSubText: { color: '#d0f5ec', fontSize: 12 },
+  aiCardLabel: { color: '#d0f5ec', fontSize: 12, marginBottom: 4 },
+  aiCardAmount: { color: '#fff', fontWeight: 'bold', fontSize: 20 },
 
   // 총 건수
   totalCount: { fontSize: 14, color: '#555', marginBottom: 14, fontWeight: '600' },
@@ -158,19 +187,21 @@ const styles = StyleSheet.create({
   tagGreenText: { color: '#00C49A', fontSize: 12, fontWeight: '600' },
   tagOrange: { backgroundColor: '#fff3e0' },
   tagOrangeText: { color: '#FF8C00', fontSize: 12, fontWeight: '600' },
+  tagRed: { backgroundColor: '#FFE5E5' },
+  tagRedText: { color: '#E53935', fontSize: 12, fontWeight: '600' },
 
   // 순위 뱃지
   rankBadge: { backgroundColor: '#00C49A', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5 },
   rankText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
 
   // 금액 박스
-  amountBox: { backgroundColor: '#f0faf5', borderRadius: 10, padding: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  amountText: { color: '#00C49A', fontWeight: 'bold', fontSize: 20 },
+  amountBox: { backgroundColor: '#E8F8F0', borderRadius: 10, padding: 14, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center' },
+  amountText: { color: '#111', fontWeight: 'bold', fontSize: 20 },
   amountSub: { color: '#888', fontSize: 13 },
 
   // 경고 박스
-  warningBox: { backgroundColor: '#fff8e1', borderRadius: 10, padding: 12, marginTop: 10 },
-  warningText: { color: '#cc7700', fontSize: 12, lineHeight: 18 },
+  warningBox: { backgroundColor: '#FFF8E1', borderRadius: 10, padding: 10, marginTop: 12, width: '100%' },
+  warningText: { color: '#B07A00', fontSize: 12, lineHeight: 18 },
 
   // 하단 탭바
   bottomTab: { flexDirection: 'row', height: 80, backgroundColor: '#FFF', borderTopWidth: 1, borderTopColor: '#EEE', paddingBottom: 20 },

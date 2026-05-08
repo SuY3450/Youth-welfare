@@ -8,6 +8,7 @@ export default function Forgot1Screen() {
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [emailFocused, setEmailFocused] = useState(false);
 
   const isValidEmail = (email: string) => {
     return /^[^\s@]+@[^\s@]+\.(com|net|org|co\.kr|kr)$/.test(email);
@@ -37,11 +38,14 @@ export default function Forgot1Screen() {
         <Text style={styles.label}>가입한 이메일 <Text style={styles.required}>*</Text></Text>
         <View style={styles.emailRow}>
           <TextInput
-            style={styles.emailInput}
+            style={[styles.emailInput, emailFocused && styles.emailInputFocused]}
             placeholder="example@email.com"
             value={email}
             onChangeText={(text) => { setEmail(text); setSent(false); }}
             keyboardType="email-address"
+            autoCapitalize="none"
+            onFocus={() => setEmailFocused(true)}
+            onBlur={() => setEmailFocused(false)}
           />
           <TouchableOpacity
             style={[styles.sendButton, (!isValidEmail(email) || loading) && styles.disabledButton]}
@@ -76,13 +80,14 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   content: { flex: 1, paddingHorizontal: 24, paddingTop: 20 },
   back: { color: '#333', marginBottom: 24, fontSize: 14 },
-  title: { fontSize: 22, fontWeight: 'bold', marginBottom: 8 },
-  subtitle: { fontSize: 14, color: '#666', marginBottom: 24, lineHeight: 22 },
-  label: { fontSize: 14, marginBottom: 6, color: '#333' },
+  title: { fontSize: 35, fontWeight: 'bold', marginBottom: 8 },
+  subtitle: { fontSize: 14, color: '#666', marginBottom: 30, lineHeight: 17 },
+  label: { fontSize: 15, marginBottom: 8, color: '#222', fontWeight: '700' },
   required: { color: 'red' },
   emailRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
-  emailInput: { flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 12, fontSize: 14 },
-  sendButton: { backgroundColor: '#1DB88E', borderRadius: 8, paddingHorizontal: 16, justifyContent: 'center' },
+  emailInput: { flex: 1, borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 10, paddingVertical: 16, paddingHorizontal: 14, fontSize: 15 },
+  emailInputFocused: { borderColor: '#00B894' },
+  sendButton: { backgroundColor: '#1DB88E', borderRadius: 10, paddingHorizontal: 18, justifyContent: 'center' },
   disabledButton: { backgroundColor: '#ccc' },
   sendButtonText: { color: '#fff', fontWeight: 'bold' },
   sentBox: { backgroundColor: '#E8F8F3', borderRadius: 8, padding: 14, marginTop: 8 },

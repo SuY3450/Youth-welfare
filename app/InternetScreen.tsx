@@ -4,7 +4,13 @@ import { Alert, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, Vi
 import { API_URL } from '../constants/api';
 import { supabase } from '../constants/supabase';
 
-const interestData = [
+interface InterestItem {
+  id: string;
+  label: string;
+  emoji: string;
+}
+
+const interestData: InterestItem[] = [
   { id: 'central', label: '중앙부처', emoji: '🤝' },
   { id: 'housing', label: '주거', emoji: '🏠' },
   { id: 'finance', label: '금융', emoji: '💰' },
@@ -15,10 +21,10 @@ const interestData = [
 
 export default function InternetScreen() {
   const router = useRouter();
-  const { profile_id } = useLocalSearchParams();
-  const [selectedIds, setSelectedIds] = useState([]);
+  const { profile_id } = useLocalSearchParams<{ profile_id?: string }>();
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
-  const toggleInterest = (id) => {
+  const toggleInterest = (id: string) => {
     setSelectedIds((prev) =>
       prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
     );
@@ -62,6 +68,8 @@ export default function InternetScreen() {
     .map((item) => item.label)
     .join(', ');
 
+  const canSubmit = selectedIds.length > 0;
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -98,7 +106,11 @@ export default function InternetScreen() {
           </Text>
         </View>
 
-        <TouchableOpacity style={styles.nextButton} onPress={handleStartMatching}>
+        <TouchableOpacity
+          style={[styles.nextButton, !canSubmit && styles.nextButtonDisabled]}
+          onPress={handleStartMatching}
+          disabled={!canSubmit}
+        >
           <Text style={styles.nextButtonText}>AI 매칭 시작 →</Text>
         </TouchableOpacity>
       </View>
@@ -117,13 +129,14 @@ const styles = StyleSheet.create({
   subTitle: { fontSize: 15, color: '#666', marginBottom: 30, fontWeight: '500' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   card: { width: '48%', backgroundColor: '#FFF', aspectRatio: 1, borderRadius: 20, borderWidth: 1, borderColor: '#EEE', justifyContent: 'center', alignItems: 'center', marginBottom: 15, elevation: 2 },
-  activeCard: { backgroundColor: '#E8F5EF', borderColor: '#67B292', borderWidth: 2 },
+  activeCard: { backgroundColor: '#E8F5EF', borderColor: '#00B894', borderWidth: 2 },
   emoji: { fontSize: 32, marginBottom: 10 },
   cardLabel: { fontSize: 16, fontWeight: '700', color: '#333' },
-  activeCardLabel: { color: '#67B292' },
+  activeCardLabel: { color: '#00B894' },
   bottomFixedArea: { paddingHorizontal: 25, paddingBottom: 30, backgroundColor: '#F7FDFB' },
   summaryBox: { backgroundColor: '#EBF7F0', padding: 18, borderRadius: 15, marginBottom: 20, flexDirection: 'row', alignItems: 'center' },
-  summaryText: { color: '#67B292', fontSize: 15, fontWeight: '700' },
-  nextButton: { backgroundColor: '#67B292', paddingVertical: 18, borderRadius: 35, alignItems: 'center' },
+  summaryText: { color: '#00B894', fontSize: 15, fontWeight: '700' },
+  nextButton: { backgroundColor: '#00B894', paddingVertical: 18, borderRadius: 35, alignItems: 'center' },
+  nextButtonDisabled: { backgroundColor: '#A8E6C9' },
   nextButtonText: { color: '#FFF', fontSize: 18, fontWeight: '800' },
 });

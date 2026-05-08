@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
@@ -44,6 +45,15 @@ export default function TermsScreen() {
     }
   };
 
+  const Checkbox = ({ checked }: { checked: boolean }) => (
+    <Ionicons
+      name={checked ? 'checkbox' : 'square-outline'}
+      size={26}
+      color={checked ? '#1DB88E' : '#C7C7C7'}
+      style={{ marginRight: 10 }}
+    />
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.content}>
@@ -56,34 +66,43 @@ export default function TermsScreen() {
           <View style={styles.progressFill} />
         </View>
 
-        <TouchableOpacity style={styles.allCheckBox} onPress={handleAllCheck}>
-          <Text style={styles.checkbox}>{allChecked ? '☑' : '☐'}</Text>
-          <Text style={styles.allCheckText}>전체 동의하기</Text>
-        </TouchableOpacity>
+        <View style={styles.agreementCard}>
+          <TouchableOpacity style={styles.allCheckRow} onPress={handleAllCheck}>
+            <Checkbox checked={allChecked} />
+            <Text style={styles.allCheckText}>전체 동의하기</Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity style={styles.checkRow} onPress={() => setTerms1(!terms1)}>
-          <Text style={styles.checkbox}>{terms1 ? '☑' : '☐'}</Text>
-          <Text style={styles.checkText}>[필수] 서비스 이용약관 보기</Text>
-        </TouchableOpacity>
+          <View style={styles.divider} />
 
-        <TouchableOpacity style={styles.checkRow} onPress={() => setTerms2(!terms2)}>
-          <Text style={styles.checkbox}>{terms2 ? '☑' : '☐'}</Text>
-          <Text style={styles.checkText}>[필수] 개인정보 수집 및 이용 동의 보기</Text>
-        </TouchableOpacity>
+          <TouchableOpacity style={styles.checkRow} onPress={() => setTerms1(!terms1)}>
+            <Checkbox checked={terms1} />
+            <Text style={styles.checkText}>[필수] 서비스 이용약관 보기</Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity style={styles.checkRow} onPress={() => setTerms3(!terms3)}>
-          <Text style={styles.checkbox}>{terms3 ? '☑' : '☐'}</Text>
-          <Text style={styles.checkText}>[필수] 만 19세 이상 (만 19-34세) 확인</Text>
-        </TouchableOpacity>
+          <TouchableOpacity style={styles.checkRow} onPress={() => setTerms2(!terms2)}>
+            <Checkbox checked={terms2} />
+            <Text style={styles.checkText}>[필수] 개인정보 수집 및 이용 동의 보기</Text>
+          </TouchableOpacity>
 
-        <View style={styles.infoBox}>
-          <Text style={styles.infoText}>본 서비스는 만 19~34세 청년 대상이며, 허위 정보 입력 시 이용이 제한될 수 있습니다.</Text>
+          <TouchableOpacity style={styles.checkRow} onPress={() => setTerms3(!terms3)}>
+            <Checkbox checked={terms3} />
+            <Text style={styles.checkText}>[필수] 만 19세 이상 (만 19-34세) 확인</Text>
+          </TouchableOpacity>
+
+          <View style={styles.infoBox}>
+            <Text style={styles.infoText}>본 서비스는 만 19~34세 청년 대상이며, 허위 정보 입력 시 이용이 제한될 수 있습니다.</Text>
+          </View>
+
+          <TouchableOpacity style={styles.checkRow} onPress={() => setMarketing(!marketing)}>
+            <Checkbox checked={marketing} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.checkText}>[선택] 마케팅 정보 수신 동의</Text>
+              <Text style={styles.checkSubText}>새로운 청년 지원사업 알림을 받아보세요</Text>
+            </View>
+          </TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={styles.checkRow} onPress={() => setMarketing(!marketing)}>
-          <Text style={styles.checkbox}>{marketing ? '☑' : '☐'}</Text>
-          <Text style={styles.checkText}>[선택] 마케팅 정보 수신 동의{'\n'}새로운 청년 지원사업 알림을 받아보세요</Text>
-        </TouchableOpacity>
+        <View style={styles.spacer} />
 
         <TouchableOpacity
           style={[styles.completeButton, (!canComplete || loading) && styles.disabledButton]}
@@ -106,24 +125,31 @@ export default function TermsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
-  content: { paddingHorizontal: 24, paddingTop: 40, paddingBottom: 40 },
+  content: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 40, paddingBottom: 24 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  title: { fontSize: 22, fontWeight: 'bold' },
+  title: { fontSize: 24, fontWeight: 'bold', color: '#111' },
   step: { fontSize: 14, color: '#999' },
-  subtitle: { fontSize: 13, color: '#999', marginBottom: 8 },
+  subtitle: { fontSize: 13, color: '#888', marginBottom: 12 },
   progressBar: { height: 3, backgroundColor: '#eee', borderRadius: 2, marginBottom: 24 },
   progressFill: { width: '100%', height: 3, backgroundColor: '#1DB88E', borderRadius: 2 },
-  allCheckBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F0FBF7', padding: 16, borderRadius: 8, marginBottom: 16 },
-  allCheckText: { fontSize: 16, fontWeight: 'bold', marginLeft: 8 },
-  checkRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 16 },
-  checkbox: { fontSize: 18, color: '#1DB88E', marginRight: 8 },
-  checkText: { fontSize: 14, color: '#333', flex: 1 },
-  infoBox: { backgroundColor: '#F0FBF7', padding: 12, borderRadius: 8, marginBottom: 16 },
-  infoText: { fontSize: 12, color: '#666' },
-  completeButton: { backgroundColor: '#1DB88E', borderRadius: 8, padding: 16, alignItems: 'center', marginBottom: 16 },
-  disabledButton: { backgroundColor: '#ccc' },
+
+  agreementCard: { backgroundColor: '#EDFAF8', borderRadius: 14, padding: 18 },
+  allCheckRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4 },
+  allCheckText: { fontSize: 16, fontWeight: 'bold', color: '#111' },
+  divider: { height: 1, backgroundColor: '#E0E5E2', marginVertical: 14 },
+
+  checkRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 14 },
+  checkText: { fontSize: 14, color: '#333', flex: 1, lineHeight: 22 },
+  checkSubText: { fontSize: 12, color: '#888', marginTop: 2 },
+
+  infoBox: { backgroundColor: '#FFF8E1', padding: 10, borderRadius: 7, marginBottom: 14, marginLeft: 36 },
+  infoText: { fontSize: 12, color: '#8A6D3B', lineHeight: 18 },
+
+  spacer: { flex: 1, minHeight: 20 },
+  completeButton: { backgroundColor: '#1DB88E', borderRadius: 10, paddingVertical: 18, alignItems: 'center', marginBottom: 12 },
+  disabledButton: { backgroundColor: '#A8E6C9' },
   completeButtonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
-  loginRow: { flexDirection: 'row', justifyContent: 'center' },
-  loginText: { color: '#666' },
+  loginRow: { flexDirection: 'row', justifyContent: 'center', marginBottom: 12 },
+  loginText: { color: '#888' },
   loginLink: { color: '#1DB88E', fontWeight: 'bold' },
 });

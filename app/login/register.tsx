@@ -111,8 +111,9 @@ export default function RegisterScreen() {
               keyboardType="email-address"
             />
             <TouchableOpacity
-              style={styles.verifyButton}
+              style={[styles.verifyButton, !isValidEmail(email) && styles.verifyButtonDisabled]}
               onPress={() => { if (isValidEmail(email)) setEmailVerified(true); }}
+              disabled={!isValidEmail(email)}
             >
               <Text style={styles.verifyButtonText}>인증</Text>
             </TouchableOpacity>
@@ -144,6 +145,8 @@ export default function RegisterScreen() {
             </View>
           </View>
 
+          <View style={styles.spacer} />
+
           <TouchableOpacity
             style={[styles.nextButton, !canNext && styles.disabledButton]}
             onPress={() => router.push({
@@ -152,7 +155,7 @@ export default function RegisterScreen() {
             })}
             disabled={!canNext}
           >
-            <Text style={styles.nextButtonText}>다음 단계 →</Text>
+            <Text style={styles.nextButtonText}>다음 단계</Text>
           </TouchableOpacity>
         </ScrollView>
       </SafeAreaView>
@@ -162,29 +165,31 @@ export default function RegisterScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
-  content: { paddingHorizontal: 24, paddingTop: 40, paddingBottom: 40 },
+  content: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 40, paddingBottom: 40 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  title: { fontSize: 22, fontWeight: 'bold' },
+  title: { fontSize: 30, fontWeight: 'bold' },
   step: { fontSize: 14, color: '#999' },
   subtitle: { fontSize: 13, color: '#999', marginBottom: 8 },
   progressBar: { height: 3, backgroundColor: '#eee', borderRadius: 2, marginBottom: 24 },
   progressFill: { width: '50%', height: 3, backgroundColor: '#1DB88E', borderRadius: 2 },
-  label: { fontSize: 14, marginBottom: 6, color: '#333' },
+  label: { fontSize: 15, marginBottom: 8, color: '#222', fontWeight: '700' },
   required: { color: 'red' },
-  input: { borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 14 },
+  input: { borderWidth: 1, borderColor: '#ddd', borderRadius: 10, paddingVertical: 16, paddingHorizontal: 14, marginBottom: 18, fontSize: 15 },
   birthRow: { flexDirection: 'row', gap: 8 },
   birthInput: { flex: 1 },
   emailRow: { flexDirection: 'row', gap: 8 },
   emailInput: { flex: 1, marginBottom: 0 },
-  verifyButton: { backgroundColor: '#1DB88E', borderRadius: 8, paddingHorizontal: 16, justifyContent: 'center', height: 48 },
+  verifyButton: { backgroundColor: '#1DB88E', borderRadius: 10, paddingHorizontal: 18, justifyContent: 'center', height: 56 },
+  verifyButtonDisabled: { backgroundColor: '#C7C7C7' },
   verifyButtonText: { color: '#fff', fontWeight: 'bold' },
   verifiedText: { fontSize: 12, color: '#333', marginTop: 6, marginBottom: 8 },
   passwordSection: { marginTop: 16 },
-  inputRow: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#ddd', borderRadius: 8, marginBottom: 16 },
+  inputRow: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#ddd', borderRadius: 10, marginBottom: 18 },
   inputRowSuccess: { borderColor: '#1DB88E' },
-  inputWithCheck: { flex: 1, padding: 12, fontSize: 14 },
-  checkMark: { color: '#1DB88E', fontSize: 18, paddingRight: 12, fontWeight: 'bold' },
-  nextButton: { backgroundColor: '#1DB88E', borderRadius: 8, padding: 16, alignItems: 'center' },
-  disabledButton: { backgroundColor: '#ccc' },
+  inputWithCheck: { flex: 1, paddingVertical: 16, paddingHorizontal: 14, fontSize: 15 },
+  checkMark: { color: '#1DB88E', fontSize: 18, paddingRight: 14, fontWeight: 'bold' },
+  spacer: { flex: 1, minHeight: 24 },
+  nextButton: { backgroundColor: '#1DB88E', borderRadius: 8, padding: 16, alignItems: 'center', marginBottom: 24 },
+  disabledButton: { backgroundColor: '#A8E6C9' },
   nextButtonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
 });

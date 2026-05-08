@@ -42,15 +42,16 @@ const SelectorModal = ({ visible, title, data, onSelect, onClose }: SelectorProp
 
 export default function InputScreen() {
   const router = useRouter();
-  const [age, setAge] = useState('27');
-  const [selectedCity, setSelectedCity] = useState('서울특별시');
-  const [selectedDistrict, setSelectedDistrict] = useState('마포구');
-  const [income, setIncome] = useState('50~100% 이하');
-  const [jobStatus, setJobStatus] = useState('구직');
-  const [education, setEducation] = useState('대학 졸업');
+  const [age, setAge] = useState('');
+  const [selectedCity, setSelectedCity] = useState('');
+  const [selectedDistrict, setSelectedDistrict] = useState('');
+  const [income, setIncome] = useState('');
+  const [jobStatus, setJobStatus] = useState('');
+  const [education, setEducation] = useState('');
   const [modalType, setModalType] = useState<string | null>(null);
 
-  
+  const canSubmit = age.trim() !== '' && selectedCity !== '' && selectedDistrict !== '' && income !== '' && jobStatus !== '' && education !== '';
+
   const handleNextStep = async () => {
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
     if (sessionError || !session) {
@@ -102,7 +103,7 @@ export default function InputScreen() {
         <View style={styles.inputGroup}>
           <Text style={styles.label}>나이</Text>
           <View style={styles.inlineInput}>
-            <TextInput style={styles.textInput} value={age} onChangeText={setAge} keyboardType="number-pad" />
+            <TextInput style={styles.textInput} value={age} onChangeText={setAge} keyboardType="number-pad" placeholder="나이 입력" placeholderTextColor="#BBB" />
             <Text style={styles.unitText}>(만) 세</Text>
           </View>
         </View>
@@ -111,11 +112,20 @@ export default function InputScreen() {
           <Text style={styles.label}>거주 지역</Text>
           <View style={styles.row}>
             <TouchableOpacity style={[styles.dropdown, { flex: 1, marginRight: 10 }]} onPress={() => setModalType('city')}>
-              <Text style={styles.dropdownText}>{selectedCity}</Text>
+              <Text style={[styles.dropdownText, !selectedCity && styles.placeholderText]}>{selectedCity || '선택'}</Text>
               <Ionicons name="chevron-down" size={16} color="#333" />
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.dropdown, { flex: 1 }]} onPress={() => setModalType('district')}>
-              <Text style={styles.dropdownText}>{selectedDistrict}</Text>
+            <TouchableOpacity
+              style={[styles.dropdown, { flex: 1 }]}
+              onPress={() => {
+                if (!selectedCity) {
+                  Alert.alert('알림', '시/도를 먼저 선택해주세요.');
+                  return;
+                }
+                setModalType('district');
+              }}
+            >
+              <Text style={[styles.dropdownText, !selectedDistrict && styles.placeholderText]}>{selectedDistrict || '선택'}</Text>
               <Ionicons name="chevron-down" size={16} color="#333" />
             </TouchableOpacity>
           </View>
@@ -146,18 +156,22 @@ export default function InputScreen() {
         <View style={styles.inputGroup}>
           <Text style={styles.label}>학력</Text>
           <TouchableOpacity style={styles.dropdown} onPress={() => setModalType('education')}>
-            <Text style={styles.dropdownText}>{education}</Text>
+            <Text style={[styles.dropdownText, !education && styles.placeholderText]}>{education || '선택'}</Text>
             <Ionicons name="chevron-down" size={20} color="#333" />
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={styles.nextButton} onPress={handleNextStep}>
-          <Text style={styles.nextButtonText}>다음 단계 →</Text>
+        <TouchableOpacity
+          style={[styles.nextButton, !canSubmit && styles.nextButtonDisabled]}
+          onPress={handleNextStep}
+          disabled={!canSubmit}
+        >
+          <Text style={styles.nextButtonText}>다음 단계</Text>
         </TouchableOpacity>
       </ScrollView>
 
-      <SelectorModal visible={modalType === 'city'} title="시/도 선택" data={cityList} onSelect={(val) => { setSelectedCity(val); setSelectedDistrict(districts[val][0]); setModalType(null); }} onClose={() => setModalType(null)} />
-      <SelectorModal visible={modalType === 'district'} title="구/시 선택" data={districts[selectedCity]} onSelect={(val) => { setSelectedDistrict(val); setModalType(null); }} onClose={() => setModalType(null)} />
+      <SelectorModal visible={modalType === 'city'} title="시/도 선택" data={cityList} onSelect={(val) => { setSelectedCity(val); setSelectedDistrict(''); setModalType(null); }} onClose={() => setModalType(null)} />
+      <SelectorModal visible={modalType === 'district'} title="구/시 선택" data={selectedCity ? districts[selectedCity] : []} onSelect={(val) => { setSelectedDistrict(val); setModalType(null); }} onClose={() => setModalType(null)} />
       <SelectorModal visible={modalType === 'education'} title="학력 선택" data={educationList} onSelect={(val) => { setEducation(val); setModalType(null); }} onClose={() => setModalType(null)} />
     </SafeAreaView>
   );
@@ -170,7 +184,7 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 26, fontWeight: '800' },
   stepText: { fontSize: 16, color: '#999' },
   progressBarBg: { height: 5, backgroundColor: '#E0E0E0', borderRadius: 10, marginBottom: 35 },
-  progressBarFill: { width: '50%', height: '100%', backgroundColor: '#67B292', borderRadius: 10 },
+  progressBarFill: { width: '50%', height: '100%', backgroundColor: '#00B894', borderRadius: 10 },
   inputGroup: { marginBottom: 25 },
   label: { fontSize: 15, fontWeight: '700', color: '#444', marginBottom: 12 },
   inlineInput: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', borderRadius: 14, borderWidth: 1, borderColor: '#EEE', paddingHorizontal: 12 },
@@ -178,14 +192,16 @@ const styles = StyleSheet.create({
   unitText: { fontSize: 14, color: '#666' },
   dropdown: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#FFF', padding: 15, borderRadius: 14, borderWidth: 1, borderColor: '#EEE' },
   dropdownText: { fontSize: 16, fontWeight: '600' },
+  placeholderText: { color: '#BBB', fontWeight: '400' },
   row: { flexDirection: 'row', justifyContent: 'space-between' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   choiceBtn: { width: '48%', backgroundColor: '#FFF', padding: 18, borderRadius: 14, borderWidth: 1, borderColor: '#EEE', alignItems: 'center', marginBottom: 12 },
   statusBtn: { flex: 1, backgroundColor: '#FFF', padding: 18, borderRadius: 14, borderWidth: 1, borderColor: '#EEE', alignItems: 'center', marginHorizontal: 4 },
-  activeBtn: { backgroundColor: '#67B292', borderColor: '#67B292' },
+  activeBtn: { backgroundColor: '#00B894', borderColor: '#00B894' },
   activeText: { color: '#FFF', fontWeight: '800' },
   choiceText: { color: '#333', fontWeight: '600' },
-  nextButton: { backgroundColor: '#67B292', padding: 20, borderRadius: 30, alignItems: 'center', marginTop: 20, marginBottom: 40 },
+  nextButton: { backgroundColor: '#00B894', padding: 20, borderRadius: 30, alignItems: 'center', marginTop: 20, marginBottom: 40 },
+  nextButtonDisabled: { backgroundColor: '#A8E6C9' },
   nextButtonText: { color: '#FFF', fontSize: 18, fontWeight: 'bold' },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
   modalContent: { width: '80%', backgroundColor: '#FFF', borderRadius: 25, padding: 20 },

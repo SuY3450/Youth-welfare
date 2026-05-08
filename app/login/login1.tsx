@@ -14,6 +14,7 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [focusedField, setFocusedField] = useState<'email' | 'password' | null>(null);
 
   const isValidEmail = (email: string) => {
     return /^[^\s@]+@[^\s@]+\.(com|net|org|co\.kr|kr)$/.test(email);
@@ -38,27 +39,34 @@ export default function LoginScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.content}>
-        <Text style={styles.title}>나만의 청년 혜택,{'\n'}AI가 찾아드려요</Text>
+        <Text style={styles.topLabel}>AI 맞춤 혜택 추천</Text>
+
+        <Text style={styles.title}>환영합니다</Text>
         <Text style={styles.subtitle}>
-          <Text style={styles.link}>로그인</Text>하고 맞춤 정책을 확인하세요
+          <Text style={styles.link}>로그인</Text>하고 내 혜택을 확인하세요
         </Text>
 
         <Text style={styles.label}>이메일</Text>
         <TextInput
-          style={styles.input}
+          style={[styles.input, focusedField === 'email' && styles.inputFocused]}
           placeholder="example@email.com"
           value={email}
           onChangeText={setEmail}
           keyboardType="email-address"
+          autoCapitalize="none"
+          onFocus={() => setFocusedField('email')}
+          onBlur={() => setFocusedField(null)}
         />
 
         <Text style={styles.label}>비밀번호</Text>
         <TextInput
-          style={styles.input}
+          style={[styles.input, focusedField === 'password' && styles.inputFocused]}
           placeholder="••••••••"
           value={password}
           onChangeText={setPassword}
           secureTextEntry
+          onFocus={() => setFocusedField('password')}
+          onBlur={() => setFocusedField(null)}
         />
 
         <TouchableOpacity onPress={() => router.push('/login/forgot1')}>
@@ -87,15 +95,17 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   content: { flex: 1, paddingHorizontal: 24, paddingTop: 60 },
-  title: { fontSize: 26, fontWeight: 'bold', marginBottom: 8 },
+  topLabel: { fontSize: 13, color: '#046451', fontWeight: '600', marginBottom: 28 },
+  title: { fontSize: 36, fontWeight: 'bold', marginBottom: 8, color: '#111' },
   subtitle: { fontSize: 14, color: '#666', marginBottom: 32 },
   link: { color: '#1DB88E', fontWeight: 'bold' },
-  label: { fontSize: 14, marginBottom: 6, color: '#333' },
-  input: { borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 14 },
-  forgotPassword: { color: '#1DB88E', textAlign: 'right', marginBottom: 24 },
-  loginButton: { backgroundColor: '#1DB88E', borderRadius: 8, padding: 16, alignItems: 'center', marginBottom: 24 },
-  disabledButton: { backgroundColor: '#ccc' },
+  label: { fontSize: 15, marginBottom: 8, color: '#222', fontWeight: '700' },
+  input: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 10, paddingVertical: 16, paddingHorizontal: 14, marginBottom: 18, fontSize: 15 },
+  inputFocused: { borderColor: '#00B894' },
+  forgotPassword: { color: '#1DB88E', textAlign: 'right', marginBottom: 20, fontWeight: '600', textDecorationLine: 'underline' },
+  loginButton: { backgroundColor: '#1DB88E', borderRadius: 10, paddingVertical: 16, alignItems: 'center', marginBottom: 24 },
+  disabledButton: { backgroundColor: '#A8E6C9' },
   loginButtonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
   registerContainer: { flexDirection: 'row', justifyContent: 'center' },
-  registerText: { color: '#666' },
+  registerText: { color: '#888' },
 });
