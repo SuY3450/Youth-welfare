@@ -51,4 +51,8 @@ constants/api.js
 __pycache__
 *.pyc
 
+# ChromaDB (백엔드 시작 시 clean_final.json에서 자동 재생성)
+chroma_db/
+backend/chroma_db/
+
 constants/supabase.ts

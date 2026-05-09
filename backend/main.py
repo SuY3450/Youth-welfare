@@ -1,3 +1,5 @@
+import asyncio
+from contextlib import asynccontextmanager
 from uuid import UUID
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,9 +10,33 @@ from sqlalchemy.sql import func
 from database import SessionLocal, Base
 from models import UserProfile
 from schemas import InterestInput, UserInput
-from rag_pipeline import run_pipeline, policies as ALL_POLICIES
+from rag_pipeline import run_pipeline, policies as ALL_POLICIES, refresh_data_and_rebuild
 
-app = FastAPI()
+REFRESH_INTERVAL_SEC = 30 * 60  # 30분
+
+
+async def _auto_refresh_loop():
+    while True:
+        try:
+            await asyncio.sleep(REFRESH_INTERVAL_SEC)
+            await asyncio.to_thread(refresh_data_and_rebuild)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"⚠️  자동 갱신 루프 에러: {type(e).__name__}: {e}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print(f"🔄 자동 데이터 갱신 시작 ({REFRESH_INTERVAL_SEC // 60}분 간격)")
+    task = asyncio.create_task(_auto_refresh_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

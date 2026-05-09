@@ -1,0 +1,41 @@
+name: 온통청년 자동 크롤링
+
+on:
+  schedule:
+    - cron: '0 17 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 라이브러리 설치
+        run: pip install -r requirements.txt
+
+      - name: 크롤링
+        env:
+          ONTONG_API_KEY: ${{ secrets.ONTONG_API_KEY }}
+        run: python crawlers/ontongyouth.py
+
+      - name: 전처리
+        run: python process/preprocess.py
+
+      - name: JSON 백업 커밋
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add data/raw/ data/clean/
+          git diff --staged --quiet || git commit -m "자동 크롤링 $(date +'%Y-%m-%d')"
+          git push

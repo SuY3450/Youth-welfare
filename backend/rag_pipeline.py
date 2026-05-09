@@ -7,6 +7,9 @@
   - 관심분야 다중 선택 (주거/금융/교육/일자리)
 """
 import os, time, json
+import urllib.request
+import urllib.error
+import threading
 from collections import Counter
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -22,7 +25,36 @@ load_dotenv()
 print("임베딩 모델 로딩 중...")
 embeddings = HuggingFaceEmbeddings(model_name="jhgan/ko-sroberta-multitask")
 
-DATA_PATH = "clean_final.json"
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_PATH = os.path.join(_THIS_DIR, "..", "data", "clean", "clean_final.json")
+
+REMOTE_DATA_URL = os.getenv(
+    "REMOTE_DATA_URL",
+    "https://raw.githubusercontent.com/SuY3450/Youth-welfare/main/data/clean/clean_final.json",
+)
+
+
+def fetch_latest_data_from_github(target_path: str = DATA_PATH, timeout: int = 30) -> bool:
+    """GitHub raw URL에서 최신 clean_final.json을 받아 로컬 파일 덮어쓴다.
+    네트워크 실패 시 False 반환만 하고 예외 안 던짐 — 백엔드는 로컬 파일로 계속 동작."""
+    try:
+        req = urllib.request.Request(REMOTE_DATA_URL, headers={"User-Agent": "youth-welfare-backend"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8")
+        new_data = json.loads(raw)
+        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+        with open(target_path, "w", encoding="utf-8") as f:
+            json.dump(new_data, f, ensure_ascii=False, indent=2)
+        print(f"📡 GitHub에서 최신 데이터 받음: {len(new_data)}건")
+        return True
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as e:
+        print(f"⚠️  GitHub fetch 실패 ({type(e).__name__}). 로컬 파일 사용.")
+        return False
+
+
+print("📡 GitHub에서 최신 데이터 가져오는 중...")
+fetch_latest_data_from_github()
+
 with open(DATA_PATH, encoding="utf-8") as f:
     policies = json.load(f)
 print(f"📦 {DATA_PATH}: {len(policies)}건")
@@ -58,6 +90,77 @@ for i in range(0, len(texts), 100):
     vectorstore.add_texts(texts=texts[i:i+100], metadatas=metadatas[i:i+100])
     print(f"  {min(i+100, len(texts))}/{len(texts)}건 저장...")
 print(f"✅ ChromaDB 저장 완료\n")
+
+
+# ══════════════════════════════════════════════════════════
+#  주기적 자동 데이터 갱신 (백엔드 켜져있는 동안)
+# ══════════════════════════════════════════════════════════
+_refresh_lock = threading.Lock()
+
+
+def refresh_data_and_rebuild() -> bool:
+    """GitHub에서 최신 데이터 fetch → 변경됐으면 ChromaDB 재빌드.
+    Returns: 재빌드 했으면 True, 변경 없거나 실패면 False."""
+    global policies, vectorstore
+
+    if not fetch_latest_data_from_github():
+        return False
+
+    try:
+        with open(DATA_PATH, encoding="utf-8") as f:
+            new_policies = json.load(f)
+    except Exception as e:
+        print(f"⚠️  새 데이터 파일 읽기 실패: {e}")
+        return False
+
+    current_ids = {p.get("id") for p in policies}
+    new_ids = {p.get("id") for p in new_policies}
+    if current_ids == new_ids:
+        print(f"📡 데이터 변경 없음 ({len(new_policies)}건). 재빌드 스킵.")
+        return False
+
+    with _refresh_lock:
+        print(f"🔄 ChromaDB 재빌드 시작 ({len(policies)}건 → {len(new_policies)}건)")
+        try:
+            vectorstore.delete_collection()
+        except Exception:
+            pass
+        vectorstore = Chroma(
+            collection_name="welfare_policies",
+            embedding_function=embeddings,
+            persist_directory="./chroma_db",
+        )
+
+        policies.clear()
+        policies.extend(new_policies)
+
+        new_texts, new_metadatas = [], []
+        for p in policies:
+            new_texts.append(str(p.get("embedding_text", p.get("raw_text", p.get("name", "")))))
+            new_metadatas.append({
+                "id":             str(p.get("id", "")),
+                "name":           str(p.get("name", "")),
+                "category":       str(p.get("category", "")),
+                "benefit_type":   str(p.get("benefit_type", "")),
+                "region":         str(p.get("region", "")),
+                "sub_region":     str(p.get("sub_region", "") or ""),
+                "source":         str(p.get("source", "")),
+                "source_url":     str(p.get("source_url", "")),
+                "amount":         str(p.get("amount", "") or ""),
+                "deadline":       str(p.get("deadline", "") or ""),
+                "age_min":        str(p.get("age_min", "") or ""),
+                "age_max":        str(p.get("age_max", "") or ""),
+                "income_max_pct": str(p.get("income_max_pct", "") or ""),
+                "housing":        str(p.get("housing", "") or ""),
+                "employment":     str(p.get("employment", "") or ""),
+                "raw_text":       str(p.get("raw_text", ""))[:500],
+            })
+
+        for i in range(0, len(new_texts), 100):
+            vectorstore.add_texts(texts=new_texts[i:i+100], metadatas=new_metadatas[i:i+100])
+
+    print(f"✅ ChromaDB 재빌드 완료: {len(policies)}건")
+    return True
 
 
 # ══════════════════════════════════════════════════════════
@@ -114,11 +217,46 @@ def generate_multi_queries(user_info: dict, category: str) -> list[str]:
 # ══════════════════════════════════════════════════════════
 #  4. 하이브리드 검색
 # ══════════════════════════════════════════════════════════
+# 앱 대분류 → 데이터의 세부 분류(mclsf) 매핑
+# 앱이 보내는 한글 라벨: 주거 / 금융 / 취업 / 교육 / 창업 / 중앙부처 / 일자리
+CATEGORY_MAP = {
+    "주거":   ["주택 및 거주지", "전월세 및 주거급여 지원", "기숙사",
+              "주택 및 거주지,전월세 및 주거급여 지원"],
+    "금융":   ["전월세 및 주거급여 지원"],
+    "취업":   ["취업", "재직자"],
+    "창업":   ["창업", "창업,취업"],
+    "교육":   ["교육비지원"],
+    "일자리": ["취업", "창업", "재직자", "창업,취업"],  # 호환용 (main.py에서 'job'→'일자리'로 매핑되는 경우)
+}
+
+# 중앙부처(=정부 부처 운영 정책) — 카테고리가 아닌 region 기준으로 필터
+KOREAN_REGIONS = {
+    "서울특별시", "부산광역시", "대구광역시", "인천광역시", "광주광역시",
+    "대전광역시", "울산광역시", "세종특별자치시",
+    "경기도", "강원도", "강원특별자치도", "충청북도", "충청남도",
+    "전라북도", "전북특별자치도", "전라남도", "경상북도", "경상남도",
+    "제주특별자치도", "전국",
+}
+
+
+def _build_search_filter(category: str, user_region: str) -> dict:
+    """카테고리 + 지역 결합 필터.
+    - "중앙부처" 선택 시: 광역시도가 아닌 정부 부처/기관 region만 검색 (카테고리 무관)
+    - 그 외: 카테고리 매핑 + 지역(전국 또는 사용자 광역)"""
+    if category == "중앙부처":
+        return {"region": {"$nin": list(KOREAN_REGIONS)}}
+
+    mapped = CATEGORY_MAP.get(category, [category])
+    cat_clause = {"category": mapped[0]} if len(mapped) == 1 else {"category": {"$in": mapped}}
+    region_clause = {"region": {"$in": ["전국", user_region]}} if user_region else {"region": "전국"}
+    return {"$and": [cat_clause, region_clause]}
+
+
 def hybrid_search(user_info: dict, category: str, top_k: int = 15) -> list[tuple]:
     queries = generate_multi_queries(user_info, category)
     all_results = {}
 
-    search_filter = {"category": category}
+    search_filter = _build_search_filter(category, user_info.get("region", ""))
 
     for query in queries:
         try:
@@ -162,12 +300,26 @@ def calculate_fit_score(policy_meta: dict, user_info: dict, similarity: float) -
         reasons.append(f"나이 ❌ ({age_min}~{age_max}세 / 현재 {user_info['age']}세)")
         eligible = False
 
-    policy_region = policy_meta.get("region", "전국")
-    if policy_region == "전국" or policy_region == user_info["region"]:
-        reasons.append(f"지역 ✅ ({policy_region})")
+    policy_region = (policy_meta.get("region") or "전국").strip()
+    policy_sub = (policy_meta.get("sub_region") or "").strip()
+    user_region = (user_info.get("region") or "").strip()
+    user_sub = (user_info.get("sub_region") or "").strip()
+
+    if policy_region == "전국":
+        reasons.append("지역 ✅ (전국)")
         score += 20
+    elif policy_region == user_region:
+        if not policy_sub:
+            reasons.append(f"지역 ✅ ({policy_region})")
+            score += 20
+        elif policy_sub == user_sub:
+            reasons.append(f"지역 ✅ ({policy_region} {policy_sub})")
+            score += 25
+        else:
+            reasons.append(f"지역 ❌ ({policy_region} {policy_sub} / 현재 {user_region} {user_sub})")
+            eligible = False
     else:
-        reasons.append(f"지역 ❌ ({policy_region} / 현재 {user_info['region']})")
+        reasons.append(f"지역 ❌ ({policy_region} / 현재 {user_region})")
         eligible = False
 
     income_str = policy_meta.get("income_max_pct", "")
@@ -360,6 +512,8 @@ def run_pipeline(user_info: dict) -> dict:
 
         for doc, sim in search_results:
             result = calculate_fit_score(doc.metadata, user_info, sim)
+            # 태그는 사용자가 선택한 관심분야 라벨로 표시 (데이터 mclsf 그대로 노출 X)
+            result["category"] = category
             if result["eligible"]:
                 all_eligible.append(result)
 
