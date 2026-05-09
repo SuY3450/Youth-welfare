@@ -46,6 +46,7 @@ export default function InternetScreen() {
           'Authorization': `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
+          profile_id,
           interests: selectedIds,
         }),
       });

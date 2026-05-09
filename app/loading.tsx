@@ -97,7 +97,7 @@ const styles = StyleSheet.create({
     height: 120,
     borderRadius: 60,
     borderWidth: 4,
-    borderColor: '#67B292',
+    borderColor: '#00B894',
     borderTopColor: 'transparent',
     justifyContent: 'center',
     alignItems: 'center',
@@ -113,5 +113,5 @@ const styles = StyleSheet.create({
   listContainer: { alignItems: 'flex-start' },
   listItem: { flexDirection: 'row', alignItems: 'center', marginBottom: 15 },
   checkIcon: { marginRight: 10 },
-  listText: { fontSize: 16, color: '#67B292', fontWeight: '500' },
+  listText: { fontSize: 16, color: '#00B894', fontWeight: '500' },
 });

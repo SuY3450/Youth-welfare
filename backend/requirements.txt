@@ -6,3 +6,8 @@ psycopg2-binary
 python-dotenv
 PyJWT
 cryptography
+langchain-google-genai
+langchain-chroma
+langchain-huggingface
+chromadb
+sentence-transformers

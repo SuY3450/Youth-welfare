@@ -200,11 +200,15 @@ def calculate_fit_score(policy_meta: dict, user_info: dict, similarity: float) -
     score += sim_score
 
     return {
+        "id":         policy_meta.get("id", ""),
         "name":       policy_meta.get("name", ""),
         "category":   policy_meta.get("category", ""),
         "amount":     policy_meta.get("amount", ""),
         "source":     policy_meta.get("source", ""),
         "source_url": policy_meta.get("source_url", ""),
+        "deadline":   policy_meta.get("deadline", ""),
+        "region":     policy_meta.get("region", ""),
+        "sub_region": policy_meta.get("sub_region", ""),
         "eligible":   eligible,
         "fit_score":  round(score, 1),
         "similarity": similarity,
@@ -394,33 +398,41 @@ def run_pipeline(user_info: dict) -> dict:
             },
         }
 
-    # Gemini 분석
+    # Gemini 분석 (실패 시 자체 결과 사용)
     print("🤖 Gemini 최종 분석 중...")
-    final_raw, llm_time = analyze_with_llm(user_info, unique_eligible)
-    print(f"\n📋 최종 추천:")
-    print(final_raw)
+    fallback_result = {
+        "results": [
+            {
+                "name": r["name"],
+                "priority": i+1,
+                "fit_score": f"{r['fit_score']}%",
+                "amount": r["amount"],
+                "reason": " / ".join(r["reasons"]),
+            }
+            for i, r in enumerate(unique_eligible[:5])
+        ],
+        "top_recommendation": unique_eligible[0]["name"],
+        "total_monthly": "",
+        "summary": "AI 분석을 일시적으로 사용할 수 없어 자체 매칭 결과를 보여드립니다.",
+    }
 
-    # LLM 응답 파싱 (실패 시 자체 결과 사용)
+    final_raw = ""
+    llm_time = 0
+    llm_result = None
     try:
-        llm_result = json.loads(
-            final_raw.replace("```json","").replace("```","").strip()
-        )
-    except:
-        llm_result = {
-            "results": [
-                {
-                    "name": r["name"],
-                    "priority": i+1,
-                    "fit_score": f"{r['fit_score']}%",
-                    "amount": r["amount"],
-                    "reason": " / ".join(r["reasons"]),
-                }
-                for i, r in enumerate(unique_eligible[:5])
-            ],
-            "top_recommendation": unique_eligible[0]["name"],
-            "total_monthly": "",
-            "summary": "",
-        }
+        final_raw, llm_time = analyze_with_llm(user_info, unique_eligible)
+        print(f"\n📋 최종 추천:")
+        print(final_raw)
+        try:
+            llm_result = json.loads(
+                final_raw.replace("```json","").replace("```","").strip()
+            )
+        except Exception as parse_err:
+            print(f"⚠️ LLM 응답 JSON 파싱 실패: {parse_err}")
+            llm_result = fallback_result
+    except Exception as api_err:
+        print(f"⚠️ Gemini API 호출 실패 (fallback 사용): {api_err}")
+        llm_result = fallback_result
 
     # 성능 지표
     similarities = [s for _, s in all_search_results]

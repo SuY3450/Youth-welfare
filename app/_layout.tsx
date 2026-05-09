@@ -20,6 +20,7 @@ export default function RootLayout() {
         <Stack.Screen name="InternetScreen" options={{ headerShown: false }} />
         <Stack.Screen name="loading" options={{ headerShown: false }} />
         <Stack.Screen name="result" options={{ headerShown: false }} />
+        <Stack.Screen name="policy-detail" options={{ headerShown: false }} />
         <Stack.Screen name="mypage" options={{ headerShown: false }} />
         <Stack.Screen name="login" options={{ headerShown: false }} />
       </Stack>

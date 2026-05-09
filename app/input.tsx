@@ -68,6 +68,7 @@ export default function InputScreen() {
           'Authorization': `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
+          user_id: session.user.id,
           age: parseInt(age),
           city: selectedCity,
           district: selectedDistrict,

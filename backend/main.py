@@ -8,7 +8,7 @@ from sqlalchemy.sql import func
 from database import SessionLocal, Base
 from models import UserProfile
 from schemas import InterestInput, UserInput
-from rag_pipeline import run_pipeline
+from rag_pipeline import run_pipeline, policies as ALL_POLICIES
 
 app = FastAPI()
 
@@ -227,6 +227,13 @@ def get_rag_result(profile_id: str, db: Session = Depends(get_db)):
         "eligible_count": rag.eligible_count,
         "top_recommendation": rag.top_recommendation,
     }
+
+@app.get("/policy/{policy_id}")
+def get_policy_by_id(policy_id: str):
+    for p in ALL_POLICIES:
+        if str(p.get("id", "")) == policy_id:
+            return p
+    raise HTTPException(status_code=404, detail="해당 정책을 찾을 수 없습니다.")
 
 @app.get("/result")
 def get_result():
