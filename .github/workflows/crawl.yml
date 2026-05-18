@@ -1,12 +1,8 @@
 name: 온통청년 자동 크롤링
-
 on:
   schedule:
     - cron: '0 17 * * *'
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
   crawl:
@@ -14,8 +10,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-python@v5
         with:
@@ -33,7 +27,11 @@ jobs:
         run: python process/preprocess.py
 
       - name: ChromaDB 적재
-        run: python run_chroma.py
+        run: |
+          python -c "
+          from db.chroma_client import load_to_chroma
+          load_to_chroma('data/clean/clean_final.json')
+          "
 
       - name: JSON 백업 커밋
         run: |
@@ -41,4 +39,4 @@ jobs:
           git config user.email "actions@github.com"
           git add data/raw/ data/clean/
           git diff --staged --quiet || git commit -m "자동 크롤링 $(date +'%Y-%m-%d')"
-          git push
+          git push --force-with-lease
