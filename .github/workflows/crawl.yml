@@ -39,4 +39,4 @@ jobs:
           git config user.email "actions@github.com"
           git add data/raw/ data/clean/
           git diff --staged --quiet || git commit -m "자동 크롤링 $(date +'%Y-%m-%d')"
-          git push
+          git push --force-with-lease
