@@ -25,6 +25,10 @@ interface PolicyFull {
   housing?: string;
   employment?: string;
   submit_docs?: string;
+  pvmthd?: string;
+  exclude_target?: string;
+  add_qlfc?: string;
+  select_method?: string;
 }
 
 interface DocumentLink {
@@ -33,6 +37,7 @@ interface DocumentLink {
   url: string | null;
   search_hint?: string;
   fee?: string;
+  ai_verified?: boolean;
 }
 
 type SectionKey = 'content' | 'target' | 'method' | 'period' | 'documents' | 'contact';
@@ -200,6 +205,94 @@ const formatRegion = (region?: string, subRegion?: string | null) => {
   return '전국';
 };
 
+// ──────────────────────────────────────────
+// 서류 파싱 + 발급처 매칭
+// ──────────────────────────────────────────
+interface ResolvedDoc {
+  name: string;
+  source: string;
+  url: string | null;
+  fee?: string;
+  hint?: string;
+  origin?: 'ai' | 'pattern' | 'none';
+}
+
+const KNOWN_DOC_SOURCES: { pattern: RegExp; source: string; url: string | null; fee?: string }[] = [
+  { pattern: /주민등록(등본|초본|표)|등초본/, source: '정부24', url: 'https://www.gov.kr', fee: '무료' },
+  { pattern: /가족관계증명|혼인관계증명|기본증명|입양관계증명|친양자/, source: '전자가족관계등록시스템', url: 'https://efamily.scourt.go.kr', fee: '무료' },
+  { pattern: /소득금액증명|근로소득.*원천징수|소득세|사업자등록증/, source: '홈택스', url: 'https://www.hometax.go.kr', fee: '무료' },
+  { pattern: /건강보험(자격|증|료)|4대\s*보험|보험료\s*납부/, source: '국민건강보험공단', url: 'https://www.nhis.or.kr', fee: '무료' },
+  { pattern: /국민연금/, source: '국민연금공단', url: 'https://www.nps.or.kr', fee: '무료' },
+  { pattern: /고용보험.*피보험|이직확인서|실업급여\s*수급/, source: '고용보험', url: 'https://www.ei.go.kr', fee: '무료' },
+  { pattern: /구직(등록|신청)|워크넷|구직활동/, source: '워크넷', url: 'https://www.work.go.kr', fee: '무료' },
+  { pattern: /통장사본|입출(통장|금)|계좌사본|예금주/, source: '본인 보관 · 은행 앱', url: null, hint: '거래 은행 앱에서 계좌 사본 발급 가능' },
+  { pattern: /신분증|주민등록증|운전면허증|여권/, source: '본인 보관', url: null },
+  { pattern: /(임대차|월세|전세)계약(서)?|월세\s*이체|임차/, source: '본인 보관 · 계약 시 받음', url: null, hint: '집주인/공인중개사에게 받은 원본 또는 사본' },
+  { pattern: /재학증명|졸업증명|성적증명|수료증|학적|재적/, source: '학교 행정실 또는 학교 포털', url: null, hint: '대학정보공시(인터넷증명발급) 가능 학교 多' },
+  { pattern: /(신청서|서약서|동의서|확약서|개인정보\s*수집)/, source: '신청 기관 양식', url: null, hint: '공고문 첨부파일 또는 신청 페이지에서 다운로드' },
+  { pattern: /지방세\s*납세|세목별\s*과세/, source: '위택스', url: 'https://www.wetax.go.kr', fee: '무료' },
+  { pattern: /등기부등본|등기사항/, source: '인터넷등기소', url: 'https://www.iros.go.kr', fee: '유료 (700~1,000원)' },
+];
+
+const parseDocItems = (submitDocs?: string): string[] => {
+  if (!submitDocs) return [];
+  const cleaned = submitDocs
+    .replace(/☞[^,\n]*/g, '')
+    .replace(/붙임\s*파일[^,\n]*/g, '')
+    .replace(/자세한\s*내용은[^,\n]*/g, '')
+    .replace(/[•○●○●·]/g, '')
+    .replace(/\([^)]*\)/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const items = cleaned
+    .split(/[,，、]/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 2 && s.length <= 100 && !/^[\d.\-:]+$/.test(s));
+  return Array.from(new Set(items));
+};
+
+const findAiMatch = (docName: string, aiDocs: DocumentLink[]): DocumentLink | undefined => {
+  const norm = (s: string) => s.replace(/\s+/g, '');
+  const nd = norm(docName);
+  return aiDocs.find((d) => {
+    const na = norm(d.doc_name);
+    return na === nd || nd.includes(na) || na.includes(nd);
+  });
+};
+
+const resolveDoc = (docName: string, aiDocs: DocumentLink[]): ResolvedDoc => {
+  const ai = findAiMatch(docName, aiDocs);
+  if (ai) {
+    return {
+      name: docName,
+      source: ai.source,
+      url: ai.url,
+      fee: ai.fee,
+      hint: ai.search_hint,
+      origin: 'ai',
+    };
+  }
+  for (const k of KNOWN_DOC_SOURCES) {
+    if (k.pattern.test(docName)) {
+      return {
+        name: docName,
+        source: k.source,
+        url: k.url,
+        fee: k.fee,
+        hint: (k as any).hint,
+        origin: 'pattern',
+      };
+    }
+  }
+  return {
+    name: docName,
+    source: '신청 기관 확인',
+    url: null,
+    hint: '공고문 안내 또는 담당자 문의',
+    origin: 'none',
+  };
+};
+
 const formatAge = (min?: string, max?: string) => {
   const hasMin = min && min !== '';
   const hasMax = max && max !== '';
@@ -222,7 +315,6 @@ export default function PolicyDetailScreen() {
   const [policy, setPolicy] = useState<PolicyFull | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showFullText, setShowFullText] = useState(false);
 
   useEffect(() => {
     const fetchPolicy = async () => {
@@ -372,6 +464,12 @@ export default function PolicyDetailScreen() {
         <View style={styles.amountCard}>
           <Text style={styles.amountLabel}>지원 금액</Text>
           <Text style={styles.amountValue}>{policy.amount || '금액 정보 없음 (원문 확인)'}</Text>
+          {policy.pvmthd && policy.pvmthd !== '기타' ? (
+            <View style={styles.pvmthdChip}>
+              <Ionicons name="cash-outline" size={13} color="#3367D6" />
+              <Text style={styles.pvmthdText}>지원 방식 · {policy.pvmthd}</Text>
+            </View>
+          ) : null}
         </View>
 
         {/* 모집 일정 */}
@@ -436,15 +534,33 @@ export default function PolicyDetailScreen() {
                 <Text style={styles.infoBlockValue}>{sections.target}</Text>
               </View>
             ) : null}
+            {policy.add_qlfc ? (
+              <View style={styles.infoBlock}>
+                <Text style={styles.infoBlockLabel}>추가 자격 요건</Text>
+                <Text style={styles.infoBlockValue}>{policy.add_qlfc}</Text>
+              </View>
+            ) : null}
           </View>
+
+          {policy.exclude_target ? (
+            <View style={styles.warnBox}>
+              <View style={styles.warnHeader}>
+                <Ionicons name="warning" size={16} color="#D85B4A" />
+                <Text style={styles.warnTitle}>제외 대상 · 신청 전 확인</Text>
+              </View>
+              <Text style={styles.warnText}>{policy.exclude_target}</Text>
+            </View>
+          ) : null}
         </View>
 
-        {/* 지원 내용 */}
-        {sections.content ? (
+        {/* 정책 내용 — 지원 대상 바로 밑. sections.content 우선, 없으면 raw_text fallback */}
+        {(sections.content || policy.raw_text) ? (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>{SECTION_TITLE.content}</Text>
+            <Text style={styles.sectionTitle}>정책 내용</Text>
             <View style={styles.descBox}>
-              <Text style={styles.descText}>{sections.content}</Text>
+              <Text style={styles.descText}>
+                {sections.content || cleanRawText(policy.raw_text)}
+              </Text>
             </View>
           </View>
         ) : null}
@@ -459,44 +575,83 @@ export default function PolicyDetailScreen() {
           </View>
         ) : null}
 
-        {/* 필요 서류 */}
-        {(sections.documents || policy.submit_docs) ? (
+        {/* 선정 방법 */}
+        {policy.select_method ? (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>{SECTION_TITLE.documents}</Text>
+            <Text style={styles.sectionTitle}>선정 방법</Text>
             <View style={styles.descBox}>
-              <Text style={styles.descText}>{sections.documents || policy.submit_docs}</Text>
+              <Text style={styles.descText}>{policy.select_method}</Text>
             </View>
-
-            {/* AI 발급처 링크 */}
-            {docLinks.length > 0 ? (
-              <View style={[styles.docLinksBox]}>
-                <View style={styles.docLinksHeader}>
-                  <Ionicons name="link-outline" size={14} color="#00A582" />
-                  <Text style={styles.docLinksTitle}>서류 발급처 (AI 안내)</Text>
-                </View>
-                {docLinks.map((dl, idx) => (
-                  <View key={idx} style={[styles.docLinkRow, idx === docLinks.length - 1 && { borderBottomWidth: 0 }]}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.docLinkName}>{dl.doc_name}</Text>
-                      <Text style={styles.docLinkSource}>{dl.source}{dl.fee ? ` · ${dl.fee}` : ''}</Text>
-                      {dl.search_hint ? <Text style={styles.docLinkHint}>{dl.search_hint}</Text> : null}
-                    </View>
-                    {dl.url ? (
-                      <TouchableOpacity
-                        style={styles.docLinkBtn}
-                        onPress={() => Linking.openURL(dl.url!)}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.docLinkBtnText}>발급</Text>
-                        <Ionicons name="open-outline" size={12} color="#00C49A" />
-                      </TouchableOpacity>
-                    ) : null}
-                  </View>
-                ))}
-              </View>
-            ) : null}
           </View>
         ) : null}
+
+        {/* 필요 서류 */}
+        {(() => {
+          const rawDocsText = sections.documents || policy.submit_docs || '';
+          const parsedNames = parseDocItems(rawDocsText);
+          const docs: ResolvedDoc[] = parsedNames.length > 0
+            ? parsedNames.map((n) => resolveDoc(n, docLinks))
+            : docLinks.map((d) => ({
+                name: d.doc_name,
+                source: d.source,
+                url: d.url,
+                fee: d.fee,
+                hint: d.search_hint,
+              }));
+          if (docs.length === 0 && !rawDocsText) return null;
+          return (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>{SECTION_TITLE.documents}</Text>
+              {docs.length > 0 ? (
+                <View style={styles.docsCard}>
+                  {docs.map((doc, idx) => (
+                    <View
+                      key={idx}
+                      style={[styles.docItemRow, idx === docs.length - 1 && { borderBottomWidth: 0 }]}
+                    >
+                      <View style={styles.docItemTextWrap}>
+                        <View style={styles.docItemNameRow}>
+                          <Text style={styles.docItemName}>{doc.name}</Text>
+                          {doc.origin === 'ai' && doc.url ? (
+                            <View style={styles.aiBadge}>
+                              <Ionicons name="sparkles" size={10} color="#7B3FE4" />
+                              <Text style={styles.aiBadgeText}>AI 추천</Text>
+                            </View>
+                          ) : null}
+                        </View>
+                        <Text style={styles.docItemSource}>
+                          {doc.source}
+                          {doc.fee ? ` · ${doc.fee}` : ''}
+                        </Text>
+                        {doc.hint ? <Text style={styles.docItemHint}>{doc.hint}</Text> : null}
+                      </View>
+                      {doc.url ? (
+                        <TouchableOpacity
+                          style={styles.docIssueBtn}
+                          onPress={() => Linking.openURL(doc.url!)}
+                          activeOpacity={0.7}
+                        >
+                          <Ionicons name="open-outline" size={13} color="#fff" />
+                          <Text style={styles.docIssueBtnText}>발급</Text>
+                        </TouchableOpacity>
+                      ) : (
+                        <View style={styles.docSelfBadge}>
+                          <Text style={styles.docSelfBadgeText}>
+                            {doc.source.includes('본인') ? '본인 준비' : '직접 발급'}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  ))}
+                </View>
+              ) : rawDocsText ? (
+                <View style={styles.descBox}>
+                  <Text style={styles.docsText}>{rawDocsText}</Text>
+                </View>
+              ) : null}
+            </View>
+          );
+        })()}
 
         {/* 문의처 */}
         {sections.contact ? (
@@ -505,41 +660,6 @@ export default function PolicyDetailScreen() {
             <View style={styles.descBox}>
               <Text style={styles.descText}>{sections.contact}</Text>
             </View>
-          </View>
-        ) : null}
-
-        {/* 섹션 추출 실패 시 fallback: 원문 전체 */}
-        {!hasAnySection && policy.raw_text ? (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>정책 안내</Text>
-            <View style={styles.descBox}>
-              <Text style={styles.descText}>{cleanRawText(policy.raw_text)}</Text>
-            </View>
-          </View>
-        ) : null}
-
-        {/* 원문 보기 토글 (섹션 분리 잘 되어도 원문 통째로 보고 싶은 경우) */}
-        {hasAnySection && policy.raw_text ? (
-          <View style={styles.section}>
-            <TouchableOpacity
-              style={styles.expandBtn}
-              onPress={() => setShowFullText(!showFullText)}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.expandBtnText}>
-                {showFullText ? '원문 접기' : '원문 전체 보기'}
-              </Text>
-              <Ionicons
-                name={showFullText ? 'chevron-up' : 'chevron-down'}
-                size={16}
-                color="#666"
-              />
-            </TouchableOpacity>
-            {showFullText ? (
-              <View style={[styles.descBox, { marginTop: 10 }]}>
-                <Text style={styles.descText}>{cleanRawText(policy.raw_text)}</Text>
-              </View>
-            ) : null}
           </View>
         ) : null}
 
@@ -605,10 +725,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#F7FDFB',
   },
   backBtn: { padding: 4 },
-  headerTitle: { fontSize: 17, fontWeight: '700', color: '#111' },
+  headerTitle: { fontSize: 18, fontWeight: '700', color: '#111' },
   container: { flex: 1, paddingHorizontal: 20 },
   emptyBox: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  emptyText: { color: '#888', fontSize: 14 },
+  emptyText: { color: '#888', fontSize: 15 },
   titleSection: { marginTop: 8, marginBottom: 18 },
   rankBadge: {
     alignSelf: 'flex-start',
@@ -618,16 +738,16 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     marginBottom: 12,
   },
-  rankText: { color: '#fff', fontWeight: '800', fontSize: 12 },
-  policyTitle: { fontSize: 22, fontWeight: '800', color: '#111', lineHeight: 30 },
-  policySource: { fontSize: 13, color: '#888', marginTop: 6 },
+  rankText: { color: '#fff', fontWeight: '800', fontSize: 13 },
+  policyTitle: { fontSize: 24, fontWeight: '800', color: '#111', lineHeight: 32 },
+  policySource: { fontSize: 14, color: '#888', marginTop: 6 },
   tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 18 },
   tagGreen: { backgroundColor: '#e6f9f4', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20 },
-  tagGreenText: { color: '#00C49A', fontSize: 12, fontWeight: '700' },
+  tagGreenText: { color: '#00C49A', fontSize: 13, fontWeight: '700' },
   tagBlue: { backgroundColor: '#E8F0FE', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20 },
-  tagBlueText: { color: '#3367D6', fontSize: 12, fontWeight: '700' },
+  tagBlueText: { color: '#3367D6', fontSize: 13, fontWeight: '700' },
   tagGray: { backgroundColor: '#F0F2F1', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20 },
-  tagGrayText: { color: '#666', fontSize: 12, fontWeight: '600' },
+  tagGrayText: { color: '#666', fontSize: 13, fontWeight: '600' },
   amountCard: {
     backgroundColor: '#fff',
     borderRadius: 16,
@@ -638,10 +758,33 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
   },
-  amountLabel: { fontSize: 13, color: '#888', marginBottom: 6, fontWeight: '600' },
-  amountValue: { fontSize: 22, fontWeight: '800', color: '#00C49A' },
+  amountLabel: { fontSize: 14, color: '#888', marginBottom: 6, fontWeight: '600' },
+  amountValue: { fontSize: 24, fontWeight: '800', color: '#00C49A' },
+  pvmthdChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: '#E8F0FE',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 16,
+    marginTop: 12,
+    gap: 5,
+  },
+  pvmthdText: { color: '#3367D6', fontSize: 13, fontWeight: '700' },
+  warnBox: {
+    marginTop: 12,
+    backgroundColor: '#FFF4F1',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#FAD4CC',
+  },
+  warnHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 6 },
+  warnTitle: { fontSize: 14, fontWeight: '800', color: '#D85B4A' },
+  warnText: { fontSize: 14, color: '#5C2F27', lineHeight: 22 },
   section: { marginBottom: 22 },
-  sectionTitle: { fontSize: 15, fontWeight: '800', color: '#111', marginBottom: 10 },
+  sectionTitle: { fontSize: 17, fontWeight: '800', color: '#111', marginBottom: 10 },
   infoCard: {
     backgroundColor: '#fff',
     borderRadius: 16,
@@ -655,15 +798,15 @@ const styles = StyleSheet.create({
   infoRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    paddingVertical: 12,
+    paddingVertical: 13,
     borderBottomWidth: 1,
     borderBottomColor: '#F2F4F3',
   },
-  infoRowLabel: { width: 80, fontSize: 13, color: '#888', fontWeight: '600' },
-  infoRowValue: { flex: 1, fontSize: 14, color: '#222', fontWeight: '600', lineHeight: 20 },
-  infoBlock: { paddingVertical: 12, borderTopWidth: 1, borderTopColor: '#F2F4F3' },
-  infoBlockLabel: { fontSize: 12, color: '#888', fontWeight: '600', marginBottom: 6 },
-  infoBlockValue: { fontSize: 13, color: '#333', lineHeight: 20 },
+  infoRowLabel: { width: 84, fontSize: 14, color: '#888', fontWeight: '600' },
+  infoRowValue: { flex: 1, fontSize: 15, color: '#222', fontWeight: '600', lineHeight: 22 },
+  infoBlock: { paddingVertical: 13, borderTopWidth: 1, borderTopColor: '#F2F4F3' },
+  infoBlockLabel: { fontSize: 13, color: '#888', fontWeight: '600', marginBottom: 6 },
+  infoBlockValue: { fontSize: 14, color: '#333', lineHeight: 22 },
   descBox: {
     backgroundColor: '#fff',
     borderRadius: 16,
@@ -673,7 +816,7 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 1,
   },
-  descText: { fontSize: 14, color: '#333', lineHeight: 22 },
+  descText: { fontSize: 15, color: '#333', lineHeight: 24 },
   expandBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -685,7 +828,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E8EAEA',
   },
-  expandBtnText: { color: '#666', fontSize: 13, fontWeight: '600', marginRight: 4 },
+  expandBtnText: { color: '#666', fontSize: 14, fontWeight: '600', marginRight: 4 },
   reasonList: {
     backgroundColor: '#fff',
     borderRadius: 16,
@@ -703,9 +846,9 @@ const styles = StyleSheet.create({
     borderBottomColor: '#F2F4F3',
   },
   reasonIcon: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -714,8 +857,8 @@ const styles = StyleSheet.create({
   reasonIconPass: { backgroundColor: '#00C49A' },
   reasonIconFail: { backgroundColor: '#E76F51' },
   reasonIconWarn: { backgroundColor: '#F4A261' },
-  reasonLabel: { fontSize: 14, fontWeight: '700', color: '#222' },
-  reasonDetail: { fontSize: 12, color: '#777', marginTop: 2, lineHeight: 18 },
+  reasonLabel: { fontSize: 15, fontWeight: '700', color: '#222' },
+  reasonDetail: { fontSize: 13, color: '#777', marginTop: 3, lineHeight: 19 },
   sourceBtn: {
     backgroundColor: '#00C49A',
     paddingVertical: 16,
@@ -725,7 +868,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 10,
   },
-  sourceBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  sourceBtnText: { color: '#fff', fontSize: 17, fontWeight: '700' },
   docLinksBox: {
     marginTop: 12,
     backgroundColor: '#F0FBF7',
@@ -739,26 +882,76 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 10,
   },
-  docLinksTitle: { fontSize: 12, fontWeight: '700', color: '#00A582', marginLeft: 5 },
+  docLinksTitle: { fontSize: 14, fontWeight: '700', color: '#00A582', marginLeft: 5 },
   docLinkRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#C8EDE3',
   },
-  docLinkName: { fontSize: 13, fontWeight: '700', color: '#222', marginBottom: 2 },
-  docLinkSource: { fontSize: 12, color: '#666' },
-  docLinkHint: { fontSize: 11, color: '#999', marginTop: 2, lineHeight: 16 },
+  docLinkName: { fontSize: 15, fontWeight: '700', color: '#222', marginBottom: 3 },
+  docLinkSource: { fontSize: 13, color: '#666' },
+  docLinkHint: { fontSize: 12, color: '#999', marginTop: 3, lineHeight: 18 },
   docLinkBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#E6F9F4',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderRadius: 8,
     marginLeft: 10,
     gap: 3,
   },
-  docLinkBtnText: { color: '#00C49A', fontSize: 12, fontWeight: '700' },
+  docLinkBtnText: { color: '#00C49A', fontSize: 13, fontWeight: '700' },
+  docsText: { fontSize: 15, color: '#333', lineHeight: 24 },
+  docsCard: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 1,
+  },
+  docItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F2F4F3',
+  },
+  docItemTextWrap: { flex: 1, marginRight: 10 },
+  docItemNameRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', marginBottom: 3, gap: 6 },
+  docItemName: { fontSize: 15, fontWeight: '700', color: '#222', lineHeight: 21 },
+  aiBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F2EAFF',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 8,
+    gap: 3,
+  },
+  aiBadgeText: { color: '#7B3FE4', fontSize: 10, fontWeight: '800' },
+  docItemSource: { fontSize: 13, color: '#666', lineHeight: 18 },
+  docItemHint: { fontSize: 12, color: '#999', marginTop: 3, lineHeight: 17 },
+  docIssueBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#00C49A',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    gap: 4,
+  },
+  docIssueBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  docSelfBadge: {
+    backgroundColor: '#F0F2F1',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 10,
+  },
+  docSelfBadgeText: { color: '#666', fontSize: 12, fontWeight: '700' },
 });

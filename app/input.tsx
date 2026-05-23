@@ -194,7 +194,13 @@ export default function InputScreen() {
       </ScrollView>
 
       <SelectorModal visible={modalType === 'city'} title="시/도 선택" data={cityList} onSelect={(val) => { setSelectedCity(val); setSelectedDistrict(''); setModalType(null); }} onClose={() => setModalType(null)} />
-      <SelectorModal visible={modalType === 'district'} title="시/군/구 선택" data={selectedCity ? districts[selectedCity] : []} onSelect={(val) => { setSelectedDistrict(val); setModalType(null); }} onClose={() => setModalType(null)} />
+      <SelectorModal
+        visible={modalType === 'district'}
+        title="시/군/구 선택"
+        data={selectedCity ? ['전체', ...districts[selectedCity]] : []}
+        onSelect={(val) => { setSelectedDistrict(val); setModalType(null); }}
+        onClose={() => setModalType(null)}
+      />
       <SelectorModal visible={modalType === 'education'} title="학력 선택" data={educationList} onSelect={(val) => { setEducation(val); setModalType(null); }} onClose={() => setModalType(null)} />
     </SafeAreaView>
   );

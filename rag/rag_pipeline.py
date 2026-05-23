@@ -13,6 +13,7 @@ import os, time, json, re
 import urllib.request
 import urllib.error
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_chroma import Chroma
@@ -89,16 +90,38 @@ def extract_sub_region_smart(raw_text: str, emb_text: str, region: str) -> str:
 
 
 def extract_amount_from_text(text: str) -> str:
+    if not text:
+        return ""
+
+    # 단위: 만원 / 천만원 / 억원 / 5자리 이상 원 (welfare 규모만)
+    UNIT = r'(?:천\s*만\s*원|천만\s*원|억\s*원|만\s*원|만원|천만원|억원)'
+    AMOUNT = rf'[\d,]+\s*{UNIT}'
+    BIG_RAW_WON = r'[\d,]{5,}\s*원'  # 10,000원 이상 (welfare 최소 규모)
+
+    # 우선순위: 컨텍스트가 명확한 패턴부터
     patterns = [
-        r'월\s*(?:최대\s*)?[\d,]+\s*만\s*원',
-        r'최대\s*[\d,]+\s*만\s*원',
-        r'[\d,]+\s*만\s*원\s*(?:지급|지원)',
-        r'연\s*[\d,]+\s*만\s*원',
-        r'분기\s*[\d,]+\s*만\s*원',
-        r'[\d,]+\s*만\s*원',
+        # 1순위: 기간 + 최대 + 금액 + 지원/지급
+        rf'(?:월|연|분기)\s*최대\s*{AMOUNT}\s*(?:지급|지원)',
+        # 2순위: 기간 + 금액 + 지원/지급
+        rf'(?:월|연|분기)\s*{AMOUNT}\s*(?:지급|지원)',
+        # 3순위: 최대 + 금액 + 지원/지급/한도/보조/대출
+        rf'최대\s*{AMOUNT}\s*(?:지급|지원|한도|보조|대출|융자)',
+        # 4순위: 금액 + 지원/지급/한도/보조/대출
+        rf'{AMOUNT}\s*(?:지급|지원|한도|보조|대출|융자)',
+        # 5순위: 큰 원 단위 (5자리 이상) + 지원/지급
+        rf'{BIG_RAW_WON}\s*(?:지급|지원|한도|보조)',
+        # 6순위: 기간 + 최대 + 금액 (컨텍스트 없어도)
+        rf'(?:월|연|분기)\s*최대\s*{AMOUNT}',
+        # 7순위: 기간 + 금액
+        rf'(?:월|연|분기)\s*{AMOUNT}',
+        # 8순위: 최대 + 금액
+        rf'최대\s*{AMOUNT}',
+        # 9순위: 단순 금액 (단위 명시된 것만)
+        AMOUNT,
     ]
+
     for pattern in patterns:
-        match = re.search(pattern, text or "")
+        match = re.search(pattern, text)
         if match:
             return match.group(0).strip()
     return ""
@@ -389,6 +412,9 @@ def calculate_fit_score(policy_meta, user_info, similarity):
     elif policy_region == user_region:
         if not policy_sub:
             reasons.append(f"지역 ✅ ({policy_region})"); score += 20
+        elif not user_sub:
+            # 사용자가 "○○ 전체" 선택 → 같은 시/도 내 모든 시/군/구 매칭
+            reasons.append(f"지역 ✅ ({policy_region} {policy_sub} / {user_region} 전체)"); score += 20
         elif policy_sub == user_sub:
             reasons.append(f"지역 ✅ ({policy_region} {policy_sub})"); score += 25
         else:
@@ -479,19 +505,41 @@ def analyze_with_llm(user_info, eligible):
 
 [서류 발급처 안내 규칙 - 반드시 준수]
 1. '제출 서류'에 나온 서류명에 대해 발급처와 URL을 document_links로 응답하세요.
-2. URL을 추측하거나 만들어내지 마세요. 정확한 발급 페이지를 모르면 도메인 루트만 응답하세요.
-3. URL로 응답 가능한 공식 도메인은 다음만 허용:
-   - https://www.gov.kr (정부24)
-   - https://www.hometax.go.kr (홈택스)
-   - https://www.nhis.or.kr (국민건강보험공단)
-   - https://www.nps.or.kr (국민연금공단)
-   - https://www.ei.go.kr (고용보험)
-   - https://www.work.go.kr (워크넷)
-   - https://efamily.scourt.go.kr (전자가족관계등록시스템)
-4. 본인 보관 서류(통장사본, 임대차계약서, 신분증 사본 등)는 url을 null로, source를 "본인 보관"으로 응답.
-5. 학교/기관 발급 서류(재학증명서, 졸업증명서 등)는 url을 null로, source를 해당 기관명으로 응답.
-6. 위 화이트리스트에 없는 발급처는 url을 null로 두고 search_hint에 검색 방법을 안내.
-7. 제출 서류 정보가 비어있으면 document_links는 빈 배열 [].
+
+2. URL 응답 원칙 — 환각 방지가 최우선:
+   - 본인이 100% 확신하는 한국 정부/공공기관 공식 도메인만 응답하세요.
+   - 도메인은 확실하지만 정확한 경로를 모르면 → 반드시 도메인 루트만 응답 (예: "https://www.example.go.kr/").
+   - 조금이라도 의심되면 url을 null로 두고 search_hint만 응답하세요.
+   - "아마도", "추정", "비슷한 사이트" 같은 경우는 무조건 url=null.
+
+3. 절대 금지 사항:
+   - 도메인 자체를 추측해서 만들지 마세요 (예: youth-welfare.go.kr 같은 가상 도메인 금지).
+   - 본인이 실제로 알지 못하는 사이트는 url=null.
+   - 경로(path)를 임의로 만들지 마세요. 도메인만 확실하면 도메인 루트만 응답.
+   - 마침표 뒤 한글이 붙은 URL 같은 잘못된 형식 금지.
+
+4. URL은 반드시 https://로 시작하고 .go.kr / .or.kr / .kr / .com 등 표준 도메인 형식이어야 합니다.
+
+5. 본인 보관 서류(통장사본, 임대차계약서, 신분증 사본 등)는 url을 null로, source를 "본인 보관"으로 응답.
+
+6. 학교/기관 발급 서류(재학증명서, 졸업증명서 등)는 url을 null로, source를 해당 기관명(예: "○○대학교 행정실")으로 응답.
+
+7. 모르는 발급처는 url=null + search_hint에 "○○ 검색" 같은 구체적 검색 방법 안내.
+
+8. 제출 서류 정보가 비어있으면 document_links는 빈 배열 [].
+
+9. 참고 — 자주 사용되는 공식 도메인 (확신 있을 때만 사용):
+   - 정부24: https://www.gov.kr
+   - 홈택스: https://www.hometax.go.kr
+   - 국민건강보험공단: https://www.nhis.or.kr
+   - 국민연금공단: https://www.nps.or.kr
+   - 고용보험: https://www.ei.go.kr
+   - 워크넷: https://www.work.go.kr
+   - 전자가족관계등록시스템: https://efamily.scourt.go.kr
+   - 위택스: https://www.wetax.go.kr
+   - 인터넷등기소: https://www.iros.go.kr
+   - 복지로: https://www.bokjiro.go.kr
+   - 다른 사이트도 확신 있으면 사용 가능. 단 위 규칙 2~4 엄수.
 
 [사용자 정보]
 - 나이 {user_info['age']}세 / 거주지 {user_info['region']} {user_info.get('sub_region','')}
@@ -532,6 +580,116 @@ JSON 형식으로만 응답 (마크다운 없이):
     start = time.time()
     response = llm.invoke([HumanMessage(content=prompt)])
     return response.content, round(time.time()-start, 2)
+
+
+# ══════════════════════════════════════════════════════════
+#  URL 검증 (Gemini 환각 차단)
+# ══════════════════════════════════════════════════════════
+# 응답이 너무 느린 사이트는 살아있어도 timeout으로 fail 처리
+URL_VALIDATE_TIMEOUT = 2.5
+URL_VALIDATE_WORKERS = 10
+_URL_VALIDATE_CACHE: dict[str, bool] = {}
+_URL_VALIDATE_LOCK = threading.Lock()
+
+_URL_FORMAT_RE = re.compile(r"^https://[a-zA-Z0-9\-._~/?#%&=:+,;@!$'()*]+$")
+
+
+def _looks_like_valid_url(url: str) -> bool:
+    """기본 형식 검증 — http 아님/한글 포함/공백 등 차단."""
+    if not url or not isinstance(url, str):
+        return False
+    url = url.strip()
+    if not url.startswith("https://"):
+        return False
+    if any(ord(c) > 127 for c in url):  # 한글/특수문자 포함
+        return False
+    if not _URL_FORMAT_RE.match(url):
+        return False
+    return True
+
+
+def validate_url_live(url: str, timeout: float = URL_VALIDATE_TIMEOUT) -> bool:
+    """HEAD 요청으로 실제 살아있는지 확인. 캐시 사용."""
+    with _URL_VALIDATE_LOCK:
+        if url in _URL_VALIDATE_CACHE:
+            return _URL_VALIDATE_CACHE[url]
+
+    ok = False
+    try:
+        req = urllib.request.Request(
+            url,
+            method="HEAD",
+            headers={
+                "User-Agent": "Mozilla/5.0 (compatible; youth-welfare-bot)",
+                "Accept": "*/*",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            ok = resp.status < 400
+    except urllib.error.HTTPError as e:
+        # 일부 사이트는 HEAD 막아둠 → GET 1바이트로 재시도
+        if e.code in (403, 405, 501):
+            try:
+                req = urllib.request.Request(
+                    url,
+                    method="GET",
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (compatible; youth-welfare-bot)",
+                        "Range": "bytes=0-0",
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    ok = resp.status < 400
+            except Exception:
+                ok = False
+        else:
+            ok = False
+    except Exception:
+        ok = False
+
+    with _URL_VALIDATE_LOCK:
+        _URL_VALIDATE_CACHE[url] = ok
+    return ok
+
+
+def sanitize_document_links(results_list: list) -> dict:
+    """Gemini 응답의 모든 document_links URL을 검증, 가짜는 null로 만듦."""
+    stats = {"checked": 0, "killed_format": 0, "killed_dead": 0, "passed": 0}
+    urls_to_check: list[str] = []
+
+    for r in results_list:
+        for dl in r.get("document_links", []) or []:
+            url = dl.get("url")
+            if url is None or url == "":
+                continue
+            stats["checked"] += 1
+            if not _looks_like_valid_url(url):
+                dl["url"] = None
+                stats["killed_format"] += 1
+                if not dl.get("search_hint"):
+                    dl["search_hint"] = f"{dl.get('source','')} 검색 후 공식 사이트 접속"
+                continue
+            urls_to_check.append(url)
+
+    unique = list(set(urls_to_check))
+    if unique:
+        with ThreadPoolExecutor(max_workers=URL_VALIDATE_WORKERS) as exe:
+            list(exe.map(validate_url_live, unique))
+
+    for r in results_list:
+        for dl in r.get("document_links", []) or []:
+            url = dl.get("url")
+            if url and not _URL_VALIDATE_CACHE.get(url, False):
+                dl["url"] = None
+                stats["killed_dead"] += 1
+                if not dl.get("search_hint"):
+                    dl["search_hint"] = f"{dl.get('source','')} 검색 후 공식 사이트 접속"
+            elif url:
+                stats["passed"] += 1
+                dl["ai_verified"] = True
+
+    print(f"🔒 URL 검증: {stats['checked']}건 중 통과 {stats['passed']} / 형식차단 {stats['killed_format']} / 사망 {stats['killed_dead']}")
+    return stats
 
 
 # ══════════════════════════════════════════════════════════
@@ -625,6 +783,15 @@ def run_pipeline(user_info: dict) -> dict:
     except Exception as e:
         print(f"⚠️ Gemini 실패: {e}")
         llm_result = fallback
+
+    # URL 환각 차단 — Gemini가 생성한 모든 URL 실시간 검증
+    try:
+        results_for_check = llm_result.get("results", [])
+        if results_for_check:
+            print("🔒 Gemini URL 검증 중...")
+            sanitize_document_links(results_for_check)
+    except Exception as e:
+        print(f"⚠️  URL 검증 중 오류 (무시하고 진행): {type(e).__name__}: {e}")
 
     similarities = [s for _,s in all_search]
     fit_scores = [r["fit_score"] for r in unique]

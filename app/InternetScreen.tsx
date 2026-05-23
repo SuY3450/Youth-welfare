@@ -11,7 +11,6 @@ interface InterestItem {
 }
 
 const interestData: InterestItem[] = [
-  { id: 'central', label: '중앙부처', emoji: '🤝' },
   { id: 'housing', label: '주거', emoji: '🏠' },
   { id: 'finance', label: '금융', emoji: '💰' },
   { id: 'job', label: '취업', emoji: '💼' },

@@ -12,6 +12,7 @@ export default function MyPageScreen() {
   const [profile, setProfile] = useState(null);
   const [ragResult, setRagResult] = useState(null);
   const [email, setEmail] = useState('');
+  const [userName, setUserName] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -20,6 +21,10 @@ export default function MyPageScreen() {
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
           setEmail(user.email);
+          const name = (user.user_metadata as any)?.name;
+          if (name && typeof name === 'string' && name.trim()) {
+            setUserName(name.trim());
+          }
 
           const profileRes = await fetch(`${API_URL}/profile/${user.id}`);
           if (profileRes.ok) {
@@ -86,9 +91,12 @@ export default function MyPageScreen() {
               <Ionicons name="person" size={36} color="#fff" />
             </View>
             <View style={styles.profileInfo}>
-              <Text style={styles.profileName}>{email}</Text>
+              <Text style={styles.profileName}>{userName || email}</Text>
+              {userName ? <Text style={styles.profileEmail}>{email}</Text> : null}
               <Text style={styles.profileSub}>
-                {profile ? `${profile.age}세 · ${profile.city} ${profile.district}` : '정보 없음'}
+                {profile
+                  ? `${profile.age}세 · ${profile.city} ${profile.district || ''}`.trim()
+                  : '정보 없음'}
               </Text>
             </View>
           </View>
@@ -193,10 +201,6 @@ export default function MyPageScreen() {
           <Text style={styles.tabText}>홈</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.tabItem}>
-          <Ionicons name="grid-outline" size={24} color="#999" />
-          <Text style={styles.tabText}>일정</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem}>
           <Ionicons name="person-circle" size={24} color="#67B292" />
           <Text style={[styles.tabText, { color: '#67B292' }]}>마이</Text>
         </TouchableOpacity>
@@ -213,7 +217,8 @@ const styles = StyleSheet.create({
   profileTop: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
   avatar: { width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.3)', justifyContent: 'center', alignItems: 'center', marginRight: 14 },
   profileInfo: {},
-  profileName: { color: '#fff', fontSize: 16, fontWeight: 'bold', marginBottom: 4 },
+  profileName: { color: '#fff', fontSize: 16, fontWeight: 'bold', marginBottom: 2 },
+  profileEmail: { color: 'rgba(255,255,255,0.7)', fontSize: 11, marginBottom: 4 },
   profileSub: { color: 'rgba(255,255,255,0.85)', fontSize: 12 },
   tagRow: { flexDirection: 'row', gap: 8, marginBottom: 16, flexWrap: 'wrap' },
   tag: { backgroundColor: 'rgba(255,255,255,0.25)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },

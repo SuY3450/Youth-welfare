@@ -186,7 +186,6 @@ async def analyze(profile_id: str, db: Session = Depends(get_db)):
         'finance': '금융',
         'job': '일자리',
         'edu': '교육',
-        'central': '중앙부처',
         'startup': '창업',
     }
     interests_korean = [interest_map.get(i.strip(), i.strip()) for i in interests]
@@ -208,10 +207,14 @@ async def analyze(profile_id: str, db: Session = Depends(get_db)):
     }
     employment = employment_map.get(profile.job_status, profile.job_status)
 
+    # 사용자가 "○○ 전체" 선택한 경우 → 시/군/구 무관(빈값)으로 처리
+    raw_district = (profile.district or "").strip()
+    sub_region = "" if raw_district.endswith("전체") else raw_district
+
     user_info = {
         "age": int(profile.age),
         "region": profile.city,
-        "sub_region": profile.district,
+        "sub_region": sub_region,
         "income_level": income_level,
         "employment": employment,
         "education": profile.education if profile.education else "",

@@ -1,6 +1,7 @@
 import json
 import hashlib
 import os
+import re  # 추가
 
 RAW_PATH   = "data/raw/승현_온통청년.json"
 CLEAN_PATH = "data/clean/clean_final.json"
@@ -10,7 +11,6 @@ def make_id(policy: dict) -> str:
     return hashlib.md5(key.encode()).hexdigest()[:12]
 
 def make_embedding_text(p: dict) -> str:
-    """ChromaDB 검색에 쓸 자연어 텍스트 생성. 코드 디코딩값 포함."""
     parts = [
         p.get("name", ""),
         p.get("lclsf", ""),
@@ -18,14 +18,10 @@ def make_embedding_text(p: dict) -> str:
         p.get("region", ""),
         p.get("sub_region", ""),
     ]
-
-    # 나이 조건
     age_min = p.get("age_min", "")
     age_max = p.get("age_max", "")
     if age_min and age_max:
         parts.append(f"나이 {age_min}세~{age_max}세")
-
-    # 소득 조건
     earn_cnd = p.get("earn_cnd", "")
     if earn_cnd and earn_cnd not in ("무관", "제한없음", ""):
         earn_max = p.get("earn_max_amt", "")
@@ -36,22 +32,80 @@ def make_embedding_text(p: dict) -> str:
             parts.append(f"소득 {earn_etc}")
         else:
             parts.append(f"소득 {earn_cnd}")
-
-    # 코드 디코딩값 (제한없음은 임베딩에서 제외 — 노이즈)
     for field in ("mrg_stts", "job", "school", "major", "special_target", "pvmthd"):
         val = p.get(field, "")
         if val and val not in ("제한없음", "기타", ""):
             parts.append(val)
-
-    # 본문
     parts.append(p.get("raw_text", ""))
-
-    # 추가 자격 조건
     add_qlfc = p.get("add_qlfc", "")
     if add_qlfc:
         parts.append(add_qlfc)
-
     return " | ".join(part for part in parts if part).strip()
+
+# ──────────────────────────────────────────
+# 추가: 4개 필드 추출 함수
+# ──────────────────────────────────────────
+def extract_employment(p: dict) -> str:
+    job = p.get("job", "")
+    text = p.get("raw_text", "")
+    results = set()
+    job_map = {
+        "미취업자": "미취업", "(예비)창업자": "창업", "재직자": "재직",
+        "자영업자": "자영업", "프리랜서": "프리랜서", "영농종사자": "영농",
+        "일용근로자": "일용직", "단기근로자": "단기근로",
+    }
+    for key, val in job_map.items():
+        if key in job:
+            results.add(val)
+    if not results or job in ("제한없음", "기타", ""):
+        if re.search(r'미취업|미취업자|비취업', text): results.add("미취업")
+        if re.search(r'재직자?|재직\s*중|현직', text): results.add("재직")
+        if re.search(r'구직\s*활동|구직자|구직\s*중', text): results.add("구직")
+        if re.search(r'(예비\s*)?창업자?|창업\s*준비', text): results.add("창업")
+        if re.search(r'자영업자?', text): results.add("자영업")
+        if re.search(r'프리랜서', text): results.add("프리랜서")
+    return "제한없음" if not results else ", ".join(sorted(results))
+
+def extract_benefit_type(p: dict) -> str:
+    combined = p.get("name", "") + " " + p.get("raw_text", "")
+    results = set()
+    if re.search(r'현금|지원금|수당|장학금|급여|포인트|상품권|바우처|교육비\s*지원|훈련\s*수당|활동비|생활비\s*지원', combined):
+        results.add("현금성")
+    if re.search(r'월세\s*지원|주거비\s*지원|임차료\s*지원', combined):
+        results.add("현금성")
+    if re.search(r'대출|융자|보증|이자\s*지원|보증료', combined):
+        results.add("대출·보증")
+    if re.search(r'무료\s*(제공|지원|이용)|서비스|상담|교육|프로그램|공간|입주|대여|취업\s*연수|일경험', combined):
+        results.add("현물·서비스")
+    if not results:
+        return ""
+    if len(results) > 1:
+        return "혼합(" + ", ".join(sorted(results)) + ")"
+    return list(results)[0]
+
+def extract_income_max_pct(p: dict) -> str:
+    if p.get("earn_cnd", "") == "무관":
+        return "무관"
+    text = p.get("earn_etc", "") + " " + p.get("raw_text", "")
+    matches = re.findall(r'(?:기준\s*)?중위소득\s*(\d+)\s*%', text)
+    if matches:
+        return str(max(int(m) for m in matches)) + "%"
+    m = re.search(r'연\s*소득\s*([\d,]+)\s*(만\s*원|천\s*원)', text)
+    if m:
+        return m.group(0).strip()
+    return ""
+
+def extract_housing(p: dict) -> str:
+    text = p.get("raw_text", "")
+    results = set()
+    if re.search(r'무주택', text): results.add("무주택")
+    if re.search(r'전세', text): results.add("전세")
+    if re.search(r'월세', text): results.add("월세")
+    if re.search(r'임차|임대\s*주택|공공임대', text): results.add("임차")
+    if re.search(r'자가|자기\s*소유|주택\s*소유', text): results.add("자가")
+    return "" if not results else ", ".join(sorted(results))
+
+# ──────────────────────────────────────────
 
 def preprocess():
     with open(RAW_PATH, encoding="utf-8") as f:
@@ -69,9 +123,7 @@ def preprocess():
         seen_ids.add(pid)
 
         results.append({
-            # 식별
             "id":              pid,
-            # 기본 정보
             "name":            p.get("name", ""),
             "lclsf":           p.get("lclsf", ""),
             "category":        p.get("category", ""),
@@ -84,38 +136,31 @@ def preprocess():
             "deadline":        p.get("deadline", ""),
             "registered_at":   p.get("registered_at", ""),
             "collected_at":    p.get("collected_at", ""),
-            # 신청 기간 타입
-            "aply_prd_type":   p.get("aply_prd_type", ""),  # 특정기간 / 상시 / 마감
+            "aply_prd_type":   p.get("aply_prd_type", ""),
             "biz_prd_type":    p.get("biz_prd_type", ""),
-            # 나이
             "age_min":         p.get("age_min", ""),
             "age_max":         p.get("age_max", ""),
-            # 소득
-            "earn_cnd":        p.get("earn_cnd", ""),        # 무관 / 연소득 / 기타
+            "earn_cnd":        p.get("earn_cnd", ""),
             "earn_min_amt":    p.get("earn_min_amt", ""),
             "earn_max_amt":    p.get("earn_max_amt", ""),
             "earn_etc":        p.get("earn_etc", ""),
-            # 자격 조건 (디코딩된 텍스트)
-            "mrg_stts":        p.get("mrg_stts", ""),        # 기혼 / 미혼 / 제한없음
-            "job":             p.get("job", ""),             # 재직자 / 미취업자 / ...
-            "school":          p.get("school", ""),          # 대학 재학 / 고졸 / ...
-            "major":           p.get("major", ""),           # 공학계열 / 제한없음 / ...
-            "special_target":  p.get("special_target", ""),  # 한부모가정 / 장애인 / ...
-            "pvmthd":          p.get("pvmthd", ""),          # 보조금 / 바우처 / ...
-            # 추가 자격 조건 텍스트
+            "mrg_stts":        p.get("mrg_stts", ""),
+            "job":             p.get("job", ""),
+            "school":          p.get("school", ""),
+            "major":           p.get("major", ""),
+            "special_target":  p.get("special_target", ""),
+            "pvmthd":          p.get("pvmthd", ""),
             "add_qlfc":        p.get("add_qlfc", ""),
             "exclude_target":  p.get("exclude_target", ""),
-            # 신청 방법
             "apply_method":    p.get("apply_method", ""),
             "select_method":   p.get("select_method", ""),
-            "submit_docs":     p.get("submit_docs", ""),  #제출서류 추가
-            # 임베딩용 텍스트
+            "submit_docs":     p.get("submit_docs", ""),
             "embedding_text":  make_embedding_text(p),
-            # 파이프라인 호환 필드 (다른 소스와 공통)
-            "benefit_type":    "",
-            "income_max_pct":  "",
-            "housing":         "",
-            "employment":      "",
+            # 4개 필드 — 빈값 대신 바로 추출
+            "benefit_type":    extract_benefit_type(p),
+            "income_max_pct":  extract_income_max_pct(p),
+            "housing":         extract_housing(p),
+            "employment":      extract_employment(p),
         })
 
     os.makedirs("data/clean", exist_ok=True)

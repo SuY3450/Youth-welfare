@@ -164,7 +164,7 @@ export default function RegisterScreen() {
             style={[styles.nextButton, !canNext && styles.disabledButton]}
             onPress={() => router.push({
               pathname: '/login/agree',
-              params: { email, password }
+              params: { email, password, name }
             })}
             disabled={!canNext}
           >

@@ -12,7 +12,7 @@ import { supabase } from '../../constants/supabase';
 
 export default function TermsScreen() {
   const router = useRouter();
-  const { email, password } = useLocalSearchParams();
+  const { email, password, name } = useLocalSearchParams();
   const [allChecked, setAllChecked] = useState(false);
   const [terms1, setTerms1] = useState(false);
   const [terms2, setTerms2] = useState(false);
@@ -36,6 +36,11 @@ export default function TermsScreen() {
     const { error } = await supabase.auth.signUp({
       email: email as string,
       password: password as string,
+      options: {
+        data: {
+          name: (name as string) || '',
+        },
+      },
     });
     setLoading(false);
     if (error) {

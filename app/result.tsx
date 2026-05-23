@@ -3,6 +3,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { supabase } from '../constants/supabase';
 
 interface Policy {
   id: string;
@@ -88,6 +89,21 @@ export default function ResultScreen() {
   const router = useRouter();
   const { resultData } = useLocalSearchParams<{ resultData?: string }>();
   const [data, setData] = useState<ResultData | null>(null);
+  const [userName, setUserName] = useState<string>('');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        const name = (user?.user_metadata as any)?.name;
+        if (name && typeof name === 'string' && name.trim().length > 0) {
+          setUserName(name.trim());
+        }
+      } catch {
+        // 이름 못 가져오면 회원님 fallback
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     if (resultData) {
@@ -135,21 +151,19 @@ export default function ResultScreen() {
       <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 30 }} showsVerticalScrollIndicator={false}>
         <Text style={styles.pageTitle}>추천 결과</Text>
 
-        <View style={styles.aiCard}>
-          <View style={styles.aiCardHeader}>
-            <View style={styles.dot} />
-            <Text style={styles.aiCardHeaderText}>AI 분석 완료</Text>
+        <View style={styles.aiSummaryCard}>
+          <View style={styles.aiSummaryHeader}>
+            <Ionicons name="sparkles" size={13} color="#fff" />
+            <Text style={styles.aiSummaryHeaderText}>AI 분석 완료</Text>
           </View>
-          {data.summary ? <Text style={styles.aiCardDesc}>{data.summary}</Text> : null}
-          <View style={styles.aiCardBottom}>
-            <Text style={styles.aiCardLabel}>예상 총 수혜 금액</Text>
-            <Text style={styles.aiCardAmount}>{data.total_monthly || '분석 중'}</Text>
-          </View>
-        </View>
-
-        <View style={styles.totalRow}>
-          <Text style={styles.totalCount}>맞춤 정책 {policies.length}건</Text>
-          <Text style={styles.totalHint}>탭하여 자세히 보기</Text>
+          <Text style={styles.aiSummaryMessage}>
+            {userName ? `${userName}님` : '회원님'}께 맞는 맞춤 정책 {policies.length}건을 찾았어요
+          </Text>
+          {policies[0]?.name ? (
+            <Text style={styles.aiSummaryTop} numberOfLines={1}>
+              1순위 · {policies[0].name}
+            </Text>
+          ) : null}
         </View>
 
         {policies.map((item, index) => {
@@ -235,10 +249,6 @@ export default function ResultScreen() {
           <Ionicons name="home" size={24} color="#67B292" />
           <Text style={[styles.tabText, { color: '#67B292' }]}>홈</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem}>
-          <Ionicons name="grid-outline" size={24} color="#999" />
-          <Text style={styles.tabText}>일정</Text>
-        </TouchableOpacity>
         <TouchableOpacity style={styles.tabItem} onPress={() => router.push('/mypage')}>
           <Ionicons name="person-circle" size={24} color="#999" />
           <Text style={[styles.tabText, { color: '#999' }]}>마이</Text>
@@ -252,17 +262,37 @@ const styles = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: '#F7FDFB' },
   container: { flex: 1, paddingHorizontal: 20 },
   pageTitle: { fontSize: 26, fontWeight: '800', color: '#111', marginTop: 16, marginBottom: 16 },
-  aiCard: { backgroundColor: '#00C49A', borderRadius: 16, padding: 18, marginBottom: 22 },
-  aiCardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
-  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff', marginRight: 6 },
-  aiCardHeaderText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-  aiCardDesc: { color: '#fff', fontSize: 14, lineHeight: 22, marginBottom: 14 },
-  aiCardBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.25)', paddingTop: 12 },
-  aiCardLabel: { color: '#d0f5ec', fontSize: 12, fontWeight: '600' },
-  aiCardAmount: { color: '#fff', fontWeight: '800', fontSize: 18 },
-  totalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
-  totalCount: { fontSize: 14, color: '#222', fontWeight: '700' },
-  totalHint: { fontSize: 12, color: '#999' },
+  aiSummaryCard: {
+    backgroundColor: '#00C49A',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginBottom: 16,
+  },
+  aiSummaryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 6,
+  },
+  aiSummaryHeaderText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  aiSummaryMessage: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+    lineHeight: 22,
+  },
+  aiSummaryTop: {
+    color: '#d0f5ec',
+    fontSize: 13,
+    fontWeight: '600',
+    marginTop: 4,
+  },
   card: { backgroundColor: '#fff', borderRadius: 16, padding: 18, marginBottom: 14, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
   cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
   rankBadge: { backgroundColor: '#00C49A', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 20 },
