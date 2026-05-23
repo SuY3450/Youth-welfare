@@ -59,8 +59,25 @@ const formatDeadline = (deadline?: string) => {
   return { text: `~ ${pretty}`, urgent: false, expired: false };
 };
 
+interface DocumentLink {
+  doc_name: string;
+  source: string;
+  url: string | null;
+  search_hint?: string;
+  fee?: string;
+}
+
+interface LlmResult {
+  name: string;
+  priority: number;
+  fit_score: string;
+  amount: string;
+  reason: string;
+  document_links?: DocumentLink[];
+}
+
 interface ResultData {
-  results?: { name: string; priority: number; fit_score: string; amount: string; reason: string }[];
+  results?: LlmResult[];
   top_recommendation?: string;
   total_monthly?: string;
   summary?: string;
@@ -92,19 +109,23 @@ export default function ResultScreen() {
 
   const policies = data.eligible_policies || [];
   const llmReasons = new Map<string, string>();
+  const llmDocLinks = new Map<string, DocumentLink[]>();
   (data.results || []).forEach((r) => {
     if (r.name && r.reason) llmReasons.set(r.name, r.reason);
+    if (r.name && r.document_links?.length) llmDocLinks.set(r.name, r.document_links);
   });
 
   const goToDetail = (policy: Policy, rank: number) => {
+    const docLinks = llmDocLinks.get(policy.name);
     router.push({
       pathname: '/policy-detail',
       params: {
-        policy_id: policy.id,
+        policy_id: policy.id || policy.name,
         rank: String(rank),
         fit_score: String(policy.fit_score),
         eligible: policy.eligible ? '1' : '0',
         reasons: JSON.stringify(policy.reasons || []),
+        document_links: docLinks ? JSON.stringify(docLinks) : '',
       },
     });
   };
@@ -177,24 +198,9 @@ export default function ResultScreen() {
                   );
                 })()}
                 {deadline ? (
-                  <View
-                    style={[
-                      styles.tagOrange,
-                      (deadline.expired || !deadline.urgent) && styles.tagGray,
-                    ]}
-                  >
-                    <Ionicons
-                      name="time-outline"
-                      size={11}
-                      color={deadline.urgent ? '#FF8C00' : '#666'}
-                      style={{ marginRight: 3 }}
-                    />
-                    <Text
-                      style={[
-                        styles.tagOrangeText,
-                        (deadline.expired || !deadline.urgent) && styles.tagGrayText,
-                      ]}
-                    >
+                  <View style={[styles.tagOrange, (deadline.expired || !deadline.urgent) && styles.tagGray]}>
+                    <Ionicons name="time-outline" size={11} color={deadline.urgent ? '#FF8C00' : '#666'} style={{ marginRight: 3 }} />
+                    <Text style={[styles.tagOrangeText, (deadline.expired || !deadline.urgent) && styles.tagGrayText]}>
                       {deadline.text}
                     </Text>
                   </View>
@@ -251,46 +257,15 @@ const styles = StyleSheet.create({
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff', marginRight: 6 },
   aiCardHeaderText: { color: '#fff', fontWeight: '700', fontSize: 14 },
   aiCardDesc: { color: '#fff', fontSize: 14, lineHeight: 22, marginBottom: 14 },
-  aiCardBottom: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.25)',
-    paddingTop: 12,
-  },
+  aiCardBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.25)', paddingTop: 12 },
   aiCardLabel: { color: '#d0f5ec', fontSize: 12, fontWeight: '600' },
   aiCardAmount: { color: '#fff', fontWeight: '800', fontSize: 18 },
-  totalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 14,
-  },
+  totalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
   totalCount: { fontSize: 14, color: '#222', fontWeight: '700' },
   totalHint: { fontSize: 12, color: '#999' },
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 18,
-    marginBottom: 14,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  cardTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  rankBadge: {
-    backgroundColor: '#00C49A',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 20,
-  },
+  card: { backgroundColor: '#fff', borderRadius: 16, padding: 18, marginBottom: 14, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
+  cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  rankBadge: { backgroundColor: '#00C49A', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 20 },
   rankText: { color: '#fff', fontWeight: '800', fontSize: 12 },
   fitBox: { flexDirection: 'row', alignItems: 'baseline' },
   fitLabel: { fontSize: 11, color: '#888', marginRight: 4, fontWeight: '600' },
@@ -300,74 +275,19 @@ const styles = StyleSheet.create({
   tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12, alignItems: 'center' },
   tagGreen: { backgroundColor: '#e6f9f4', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
   tagGreenText: { color: '#00C49A', fontSize: 12, fontWeight: '700' },
-  tagOrange: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFF3E0',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 20,
-  },
+  tagOrange: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF3E0', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
   tagOrangeText: { color: '#FF8C00', fontSize: 12, fontWeight: '700' },
   tagGray: { backgroundColor: '#F0F2F1', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
   tagGrayText: { color: '#666', fontSize: 12, fontWeight: '600' },
-  descText: {
-    fontSize: 13,
-    color: '#444',
-    lineHeight: 19,
-    marginTop: 10,
-    marginBottom: 4,
-  },
-  amountBox: {
-    backgroundColor: '#f0faf5',
-    borderRadius: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    marginBottom: 10,
-  },
+  amountBox: { backgroundColor: '#f0faf5', borderRadius: 10, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 10 },
   amountText: { color: '#00C49A', fontWeight: '800', fontSize: 18 },
-  reasonBox: {
-    backgroundColor: '#F0FBF7',
-    borderLeftWidth: 3,
-    borderLeftColor: '#00C49A',
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    marginTop: 4,
-    marginBottom: 10,
-  },
-  reasonBoxHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  reasonBoxTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#00A582',
-    marginLeft: 4,
-    letterSpacing: 0.2,
-  },
-  reasonBoxText: {
-    fontSize: 13.5,
-    color: '#333',
-    lineHeight: 21,
-  },
-  detailHint: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    marginTop: 4,
-  },
+  reasonBox: { backgroundColor: '#F0FBF7', borderLeftWidth: 3, borderLeftColor: '#00C49A', borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, marginTop: 4, marginBottom: 10 },
+  reasonBoxHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+  reasonBoxTitle: { fontSize: 12, fontWeight: '700', color: '#00A582', marginLeft: 4, letterSpacing: 0.2 },
+  reasonBoxText: { fontSize: 13.5, color: '#333', lineHeight: 21 },
+  detailHint: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginTop: 4 },
   detailHintText: { color: '#00C49A', fontSize: 13, fontWeight: '700', marginRight: 2 },
-  bottomTab: {
-    flexDirection: 'row',
-    height: 80,
-    backgroundColor: '#FFF',
-    borderTopWidth: 1,
-    borderTopColor: '#EEE',
-    paddingBottom: 20,
-  },
+  bottomTab: { flexDirection: 'row', height: 80, backgroundColor: '#FFF', borderTopWidth: 1, borderTopColor: '#EEE', paddingBottom: 20 },
   tabItem: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   tabText: { fontSize: 12, marginTop: 4, color: '#999', fontWeight: '600' },
 });

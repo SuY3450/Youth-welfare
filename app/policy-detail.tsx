@@ -24,6 +24,15 @@ interface PolicyFull {
   income_max_pct?: string;
   housing?: string;
   employment?: string;
+  submit_docs?: string;
+}
+
+interface DocumentLink {
+  doc_name: string;
+  source: string;
+  url: string | null;
+  search_hint?: string;
+  fee?: string;
 }
 
 type SectionKey = 'content' | 'target' | 'method' | 'period' | 'documents' | 'contact';
@@ -202,11 +211,12 @@ const formatAge = (min?: string, max?: string) => {
 
 export default function PolicyDetailScreen() {
   const router = useRouter();
-  const { policy_id, rank, fit_score, reasons } = useLocalSearchParams<{
+  const { policy_id, rank, fit_score, reasons, document_links } = useLocalSearchParams<{
     policy_id?: string;
     rank?: string;
     fit_score?: string;
     reasons?: string;
+    document_links?: string;
   }>();
 
   const [policy, setPolicy] = useState<PolicyFull | null>(null);
@@ -244,6 +254,15 @@ export default function PolicyDetailScreen() {
     try {
       const arr: string[] = JSON.parse(reasons);
       return arr.map(parseReason);
+    } catch {
+      return [];
+    }
+  })();
+
+  const docLinks: DocumentLink[] = (() => {
+    if (!document_links) return [];
+    try {
+      return JSON.parse(document_links);
     } catch {
       return [];
     }
@@ -441,12 +460,41 @@ export default function PolicyDetailScreen() {
         ) : null}
 
         {/* 필요 서류 */}
-        {sections.documents ? (
+        {(sections.documents || policy.submit_docs) ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>{SECTION_TITLE.documents}</Text>
             <View style={styles.descBox}>
-              <Text style={styles.descText}>{sections.documents}</Text>
+              <Text style={styles.descText}>{sections.documents || policy.submit_docs}</Text>
             </View>
+
+            {/* AI 발급처 링크 */}
+            {docLinks.length > 0 ? (
+              <View style={[styles.docLinksBox]}>
+                <View style={styles.docLinksHeader}>
+                  <Ionicons name="link-outline" size={14} color="#00A582" />
+                  <Text style={styles.docLinksTitle}>서류 발급처 (AI 안내)</Text>
+                </View>
+                {docLinks.map((dl, idx) => (
+                  <View key={idx} style={[styles.docLinkRow, idx === docLinks.length - 1 && { borderBottomWidth: 0 }]}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.docLinkName}>{dl.doc_name}</Text>
+                      <Text style={styles.docLinkSource}>{dl.source}{dl.fee ? ` · ${dl.fee}` : ''}</Text>
+                      {dl.search_hint ? <Text style={styles.docLinkHint}>{dl.search_hint}</Text> : null}
+                    </View>
+                    {dl.url ? (
+                      <TouchableOpacity
+                        style={styles.docLinkBtn}
+                        onPress={() => Linking.openURL(dl.url!)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.docLinkBtnText}>발급</Text>
+                        <Ionicons name="open-outline" size={12} color="#00C49A" />
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                ))}
+              </View>
+            ) : null}
           </View>
         ) : null}
 
@@ -678,4 +726,39 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   sourceBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  docLinksBox: {
+    marginTop: 12,
+    backgroundColor: '#F0FBF7',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#C8EDE3',
+  },
+  docLinksHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  docLinksTitle: { fontSize: 12, fontWeight: '700', color: '#00A582', marginLeft: 5 },
+  docLinkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#C8EDE3',
+  },
+  docLinkName: { fontSize: 13, fontWeight: '700', color: '#222', marginBottom: 2 },
+  docLinkSource: { fontSize: 12, color: '#666' },
+  docLinkHint: { fontSize: 11, color: '#999', marginTop: 2, lineHeight: 16 },
+  docLinkBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E6F9F4',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginLeft: 10,
+    gap: 3,
+  },
+  docLinkBtnText: { color: '#00C49A', fontSize: 12, fontWeight: '700' },
 });

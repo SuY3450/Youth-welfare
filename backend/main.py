@@ -1,3 +1,7 @@
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import asyncio
 from contextlib import asynccontextmanager
 from uuid import UUID
@@ -10,7 +14,7 @@ from sqlalchemy.sql import func
 from database import SessionLocal, Base
 from models import UserProfile
 from schemas import InterestInput, UserInput
-from rag_pipeline import run_pipeline, policies as ALL_POLICIES, refresh_data_and_rebuild
+from rag.rag_pipeline import run_pipeline, policies as ALL_POLICIES, refresh_data_and_rebuild
 
 REFRESH_INTERVAL_SEC = 30 * 60  # 30분
 

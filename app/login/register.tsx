@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useRef, useState } from 'react';
 import {
@@ -19,6 +20,8 @@ export default function RegisterScreen() {
   const [emailVerified, setEmailVerified] = useState(false);
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showPasswordConfirm, setShowPasswordConfirm] = useState(false);
 
   const monthRef = useRef<TextInput>(null);
   const dayRef = useRef<TextInput>(null);
@@ -124,13 +127,18 @@ export default function RegisterScreen() {
 
           <View style={styles.passwordSection}>
             <Text style={styles.label}>비밀번호 <Text style={styles.required}>*</Text></Text>
-            <TextInput
-              style={styles.input}
-              placeholder="••••••••"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-            />
+            <View style={styles.passwordRow}>
+              <TextInput
+                style={styles.passwordInput}
+                placeholder="••••••••"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={!showPassword}
+              />
+              <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeButton}>
+                <Ionicons name={showPassword ? 'eye' : 'eye-off'} size={20} color="#999" />
+              </TouchableOpacity>
+            </View>
 
             <Text style={styles.label}>비밀번호 확인 <Text style={styles.required}>*</Text></Text>
             <View style={[styles.inputRow, isPasswordMatch && styles.inputRowSuccess]}>
@@ -139,9 +147,14 @@ export default function RegisterScreen() {
                 placeholder="••••••••"
                 value={passwordConfirm}
                 onChangeText={setPasswordConfirm}
-                secureTextEntry
+                secureTextEntry={!showPasswordConfirm}
               />
-              {isPasswordMatch && <Text style={styles.checkMark}>✓</Text>}
+              {isPasswordMatch
+                ? <Text style={styles.checkMark}>✓</Text>
+                : <TouchableOpacity onPress={() => setShowPasswordConfirm(!showPasswordConfirm)} style={styles.eyeButton}>
+                    <Ionicons name={showPasswordConfirm ? 'eye' : 'eye-off'} size={20} color="#999" />
+                  </TouchableOpacity>
+              }
             </View>
           </View>
 
@@ -184,6 +197,9 @@ const styles = StyleSheet.create({
   verifyButtonText: { color: '#fff', fontWeight: 'bold' },
   verifiedText: { fontSize: 12, color: '#333', marginTop: 6, marginBottom: 8 },
   passwordSection: { marginTop: 16 },
+  passwordRow: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#ddd', borderRadius: 10, marginBottom: 18 },
+  passwordInput: { flex: 1, paddingVertical: 16, paddingHorizontal: 14, fontSize: 15 },
+  eyeButton: { paddingHorizontal: 12 },
   inputRow: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#ddd', borderRadius: 10, marginBottom: 18 },
   inputRowSuccess: { borderColor: '#1DB88E' },
   inputWithCheck: { flex: 1, paddingVertical: 16, paddingHorizontal: 14, fontSize: 15 },
