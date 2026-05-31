@@ -128,13 +128,6 @@ export default function MyPageScreen() {
             </Text>
             <Text style={styles.statLabel}>신청 가능</Text>
           </View>
-          <View style={styles.statDivider} />
-          <View style={styles.statItem}>
-            <Text style={[styles.statNumber, { color: '#FF8C00' }]}>
-              {ragResult ? ragResult.total_monthly : '-'}
-            </Text>
-            <Text style={styles.statLabel}>예상 수혜</Text>
-          </View>
         </View>
 
         <View style={styles.sectionCard}>

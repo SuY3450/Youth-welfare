@@ -130,7 +130,15 @@ const parseSections = (rawText?: string): Record<SectionKey, string> => {
     const start = cur.contentStart;
     const end = nxt ? nxt.headerStart : rawText.length;
     let chunk = rawText.slice(start, end).trim();
-    chunk = chunk.replace(/관심 정책정보 목록.*$/s, '').replace(/유관기관 사이트.*$/s, '').replace(/본 정보는 제공기관의[^.]*\./g, '').trim();
+    chunk = chunk
+      .replace(/관심 정책정보 목록.*$/s, '')
+      .replace(/유관기관 사이트.*$/s, '')
+      .replace(/본 정보는 제공기관의[^.]*\./g, '')
+      // 끝에 매달린 불릿/공백 제거 (다음 섹션 헤더의 prefix가 남은 것)
+      .replace(/[\s○■▶◆◇▣◎·\-]+$/u, '')
+      // 시작에 붙은 불릿/공백 제거
+      .replace(/^[\s○■▶◆◇▣◎·\-]+/u, '')
+      .trim();
     if (chunk && !result[cur.key]) {
       result[cur.key] = chunk;
     } else if (chunk && result[cur.key]) {
@@ -215,6 +223,14 @@ interface ResolvedDoc {
   fee?: string;
   hint?: string;
   origin?: 'ai' | 'pattern' | 'none';
+  required?: 'required' | 'optional' | null;
+  ifNeeded?: boolean;
+}
+
+interface ParsedDocItem {
+  name: string;
+  required: 'required' | 'optional' | null;
+  ifNeeded: boolean;
 }
 
 const KNOWN_DOC_SOURCES: { pattern: RegExp; source: string; url: string | null; fee?: string }[] = [
@@ -234,21 +250,110 @@ const KNOWN_DOC_SOURCES: { pattern: RegExp; source: string; url: string | null; 
   { pattern: /등기부등본|등기사항/, source: '인터넷등기소', url: 'https://www.iros.go.kr', fee: '유료 (700~1,000원)' },
 ];
 
-const parseDocItems = (submitDocs?: string): string[] => {
-  if (!submitDocs) return [];
+// 괄호 밖의 줄바꿈/쉼표로만 분리 (괄호 안의 쉼표는 항목 구분자가 아님)
+const splitOutsideParens = (text: string): string[] => {
+  const items: string[] = [];
+  let buf = '';
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '(' || c === '（' || c === '[' || c === '【') depth++;
+    else if (c === ')' || c === '）' || c === ']' || c === '】') depth = Math.max(0, depth - 1);
+
+    if (depth === 0 && (c === '\n' || c === ',' || c === '，' || c === '、')) {
+      if (buf.trim().length > 0) items.push(buf);
+      buf = '';
+    } else {
+      buf += c;
+    }
+  }
+  if (buf.trim().length > 0) items.push(buf);
+  return items;
+};
+
+const parseDocItems = (submitDocs?: string): { items: ParsedDocItem[]; notes: string[] } => {
+  if (!submitDocs) return { items: [], notes: [] };
+  // 전역 노이즈 제거 (줄 단위 처리를 위해 줄바꿈은 보존)
   const cleaned = submitDocs
-    .replace(/☞[^,\n]*/g, '')
-    .replace(/붙임\s*파일[^,\n]*/g, '')
-    .replace(/자세한\s*내용은[^,\n]*/g, '')
-    .replace(/[•○●○●·]/g, '')
-    .replace(/\([^)]*\)/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  const items = cleaned
-    .split(/[,，、]/)
-    .map((s) => s.trim())
-    .filter((s) => s.length >= 2 && s.length <= 100 && !/^[\d.\-:]+$/.test(s));
-  return Array.from(new Set(items));
+    .replace(/☞[^\n]*/g, '')
+    .replace(/붙임\s*파일[^\n]*/g, '')
+    .replace(/자세한\s*내용은[^\n]*/g, '')
+    .replace(/[•○●·]/g, '');
+
+  // 줄 단위 처리: ※ 주석은 notes로 따로 모으고, [필수서류]/[선택서류] 헤더로 컨텍스트 추적
+  let contextRequired: 'required' | 'optional' | null = null;
+  const items: ParsedDocItem[] = [];
+  const notes: string[] = [];
+
+  for (const line of cleaned.split(/\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    // 라인 시작 ※ 주석 → 안내문으로 분리 (서류 항목으로 보지 않음)
+    if (/^※/.test(trimmed)) {
+      notes.push(trimmed);
+      continue;
+    }
+
+    // [필수서류] / [필수] / 【필수서류】 / <필수> 등 섹션 헤더 → 컨텍스트 설정 후 항목 자체는 제외
+    if (/^[\[<【［＜]\s*필수(?:\s*서류)?\s*[\]>】］＞]\s*$/.test(trimmed)) {
+      contextRequired = 'required';
+      continue;
+    }
+    if (/^[\[<【［＜]\s*선택(?:\s*서류)?\s*[\]>】］＞]\s*$/.test(trimmed)) {
+      contextRequired = 'optional';
+      continue;
+    }
+
+    // 한 줄에 쉼표로 여러 항목이 있을 수 있음 (괄호 안 쉼표는 보존)
+    const lineItems = splitOutsideParens(line);
+
+    for (const raw of lineItems) {
+      const itemTrim = raw.trim();
+      if (!itemTrim) continue;
+      if (/^※/.test(itemTrim)) continue;
+
+      // 태그 감지 — 명시적 (필수)/(선택)이 컨텍스트보다 우선
+      let required: 'required' | 'optional' | null = contextRequired;
+      if (/[(（]\s*필수\s*[)）]/.test(raw)) required = 'required';
+      else if (/[(（]\s*선택\s*[)）]/.test(raw)) required = 'optional';
+      const ifNeeded = /[(（]\s*필요시\s*[)）]/.test(raw);
+
+      // 태그 부분만 제거 — 괄호 내용·※주석은 그대로 둠
+      const name = raw
+        .replace(/[(（]\s*필수\s*[)）]/g, '')
+        .replace(/[(（]\s*선택\s*[)）]/g, '')
+        .replace(/[(（]\s*필요시\s*[)）]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (name.length >= 2 && name.length <= 300 && !/^[\d.\-:]+$/.test(name)) {
+        items.push({ name, required, ifNeeded });
+      }
+    }
+  }
+
+  // 중복 제거 (공백 정규화 후 비교, 필수 우선, ifNeeded는 OR 병합)
+  const seen = new Map<string, ParsedDocItem>();
+  for (const item of items) {
+    const key = item.name.replace(/\s+/g, '');
+    const existing = seen.get(key);
+    if (!existing) {
+      seen.set(key, item);
+    } else {
+      const merged: ParsedDocItem = {
+        name: existing.name,
+        required: existing.required === 'required' || item.required === 'required'
+          ? 'required'
+          : (existing.required ?? item.required),
+        ifNeeded: existing.ifNeeded || item.ifNeeded,
+      };
+      seen.set(key, merged);
+    }
+  }
+
+  // notes도 중복 제거
+  const uniqueNotes = Array.from(new Set(notes.map(n => n.replace(/\s+/g, ' ').trim())));
+  return { items: Array.from(seen.values()), notes: uniqueNotes };
 };
 
 const findAiMatch = (docName: string, aiDocs: DocumentLink[]): DocumentLink | undefined => {
@@ -260,7 +365,8 @@ const findAiMatch = (docName: string, aiDocs: DocumentLink[]): DocumentLink | un
   });
 };
 
-const resolveDoc = (docName: string, aiDocs: DocumentLink[]): ResolvedDoc => {
+const resolveDoc = (item: ParsedDocItem, aiDocs: DocumentLink[]): ResolvedDoc => {
+  const docName = item.name;
   const ai = findAiMatch(docName, aiDocs);
   if (ai) {
     return {
@@ -270,6 +376,8 @@ const resolveDoc = (docName: string, aiDocs: DocumentLink[]): ResolvedDoc => {
       fee: ai.fee,
       hint: ai.search_hint,
       origin: 'ai',
+      required: item.required,
+      ifNeeded: item.ifNeeded,
     };
   }
   for (const k of KNOWN_DOC_SOURCES) {
@@ -281,6 +389,8 @@ const resolveDoc = (docName: string, aiDocs: DocumentLink[]): ResolvedDoc => {
         fee: k.fee,
         hint: (k as any).hint,
         origin: 'pattern',
+        required: item.required,
+        ifNeeded: item.ifNeeded,
       };
     }
   }
@@ -290,6 +400,8 @@ const resolveDoc = (docName: string, aiDocs: DocumentLink[]): ResolvedDoc => {
     url: null,
     hint: '공고문 안내 또는 담당자 문의',
     origin: 'none',
+    required: item.required,
+    ifNeeded: item.ifNeeded,
   };
 };
 
@@ -588,7 +700,9 @@ export default function PolicyDetailScreen() {
         {/* 필요 서류 */}
         {(() => {
           const rawDocsText = sections.documents || policy.submit_docs || '';
-          const parsedNames = parseDocItems(rawDocsText);
+          const parsed = parseDocItems(rawDocsText);
+          const parsedNames = parsed.items;
+          const docNotes = parsed.notes;
           const docs: ResolvedDoc[] = parsedNames.length > 0
             ? parsedNames.map((n) => resolveDoc(n, docLinks))
             : docLinks.map((d) => ({
@@ -598,10 +712,17 @@ export default function PolicyDetailScreen() {
                 fee: d.fee,
                 hint: d.search_hint,
               }));
-          if (docs.length === 0 && !rawDocsText) return null;
+          if (docs.length === 0 && docNotes.length === 0 && !rawDocsText) return null;
           return (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>{SECTION_TITLE.documents}</Text>
+              {docNotes.length > 0 ? (
+                <View style={styles.docNotesCard}>
+                  {docNotes.map((note, idx) => (
+                    <Text key={idx} style={styles.docNoteText}>{note}</Text>
+                  ))}
+                </View>
+              ) : null}
               {docs.length > 0 ? (
                 <View style={styles.docsCard}>
                   {docs.map((doc, idx) => (
@@ -610,15 +731,32 @@ export default function PolicyDetailScreen() {
                       style={[styles.docItemRow, idx === docs.length - 1 && { borderBottomWidth: 0 }]}
                     >
                       <View style={styles.docItemTextWrap}>
-                        <View style={styles.docItemNameRow}>
-                          <Text style={styles.docItemName}>{doc.name}</Text>
-                          {doc.origin === 'ai' && doc.url ? (
-                            <View style={styles.aiBadge}>
-                              <Ionicons name="sparkles" size={10} color="#7B3FE4" />
-                              <Text style={styles.aiBadgeText}>AI 추천</Text>
-                            </View>
-                          ) : null}
-                        </View>
+                        {(doc.required || doc.ifNeeded || (doc.origin === 'ai' && doc.url)) ? (
+                          <View style={styles.docBadgeRow}>
+                            {doc.required === 'required' ? (
+                              <View style={styles.requiredBadge}>
+                                <Text style={styles.requiredBadgeText}>필수</Text>
+                              </View>
+                            ) : null}
+                            {doc.ifNeeded ? (
+                              <View style={styles.ifNeededBadge}>
+                                <Text style={styles.ifNeededBadgeText}>필요시</Text>
+                              </View>
+                            ) : null}
+                            {doc.required === 'optional' ? (
+                              <View style={styles.optionalBadge}>
+                                <Text style={styles.optionalBadgeText}>선택</Text>
+                              </View>
+                            ) : null}
+                            {doc.origin === 'ai' && doc.url ? (
+                              <View style={styles.aiBadge}>
+                                <Ionicons name="sparkles" size={10} color="#7B3FE4" />
+                                <Text style={styles.aiBadgeText}>AI 추천</Text>
+                              </View>
+                            ) : null}
+                          </View>
+                        ) : null}
+                        <Text style={styles.docItemName}>{doc.name}</Text>
                         <Text style={styles.docItemSource}>
                           {doc.source}
                           {doc.fee ? ` · ${doc.fee}` : ''}
@@ -905,6 +1043,21 @@ const styles = StyleSheet.create({
   },
   docLinkBtnText: { color: '#00C49A', fontSize: 13, fontWeight: '700' },
   docsText: { fontSize: 15, color: '#333', lineHeight: 24 },
+  docNotesCard: {
+    backgroundColor: '#FFF8E5',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginBottom: 10,
+    borderLeftWidth: 3,
+    borderLeftColor: '#E5B844',
+  },
+  docNoteText: {
+    fontSize: 13,
+    color: '#7A5C00',
+    lineHeight: 20,
+    marginVertical: 2,
+  },
   docsCard: {
     backgroundColor: '#fff',
     borderRadius: 16,
@@ -924,7 +1077,8 @@ const styles = StyleSheet.create({
   },
   docItemTextWrap: { flex: 1, marginRight: 10 },
   docItemNameRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', marginBottom: 3, gap: 6 },
-  docItemName: { fontSize: 15, fontWeight: '700', color: '#222', lineHeight: 21 },
+  docBadgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 6 },
+  docItemName: { fontSize: 15, fontWeight: '700', color: '#222', lineHeight: 22, marginBottom: 4 },
   aiBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -935,6 +1089,27 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   aiBadgeText: { color: '#7B3FE4', fontSize: 10, fontWeight: '800' },
+  requiredBadge: {
+    backgroundColor: '#FFE9E5',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  requiredBadgeText: { color: '#D85B4A', fontSize: 11, fontWeight: '800', letterSpacing: 0.2 },
+  optionalBadge: {
+    backgroundColor: '#FFF1DC',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  optionalBadgeText: { color: '#C77810', fontSize: 11, fontWeight: '800', letterSpacing: 0.2 },
+  ifNeededBadge: {
+    backgroundColor: '#F0F2F1',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  ifNeededBadgeText: { color: '#777', fontSize: 11, fontWeight: '800', letterSpacing: 0.2 },
   docItemSource: { fontSize: 13, color: '#666', lineHeight: 18 },
   docItemHint: { fontSize: 12, color: '#999', marginTop: 3, lineHeight: 17 },
   docIssueBtn: {

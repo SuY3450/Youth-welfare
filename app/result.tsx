@@ -178,16 +178,22 @@ export default function ResultScreen() {
               onPress={() => goToDetail(item, rank)}
             >
               <View style={styles.cardTop}>
-                <View style={styles.rankBadge}>
-                  <Text style={styles.rankText}>{rank}순위</Text>
-                </View>
+                {rank <= 3 ? (
+                  <View style={styles.rankBadge}>
+                    <Text style={styles.rankText}>{rank}순위</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.cardTitleInline} numberOfLines={2}>{item.name}</Text>
+                )}
                 <View style={styles.fitBox}>
                   <Text style={styles.fitLabel}>적합도</Text>
                   <Text style={styles.fitValue}>{item.fit_score}%</Text>
                 </View>
               </View>
 
-              <Text style={styles.cardTitle} numberOfLines={2}>{item.name}</Text>
+              {rank <= 3 ? (
+                <Text style={styles.cardTitle} numberOfLines={2}>{item.name}</Text>
+              ) : null}
               <Text style={styles.cardSource} numberOfLines={1}>{item.source}</Text>
 
               <View style={styles.tagRow}>
@@ -295,12 +301,13 @@ const styles = StyleSheet.create({
   },
   card: { backgroundColor: '#fff', borderRadius: 16, padding: 18, marginBottom: 14, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
   cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  rankBadge: { backgroundColor: '#00C49A', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 20 },
-  rankText: { color: '#fff', fontWeight: '800', fontSize: 12 },
+  rankBadge: { backgroundColor: '#00C49A', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20 },
+  rankText: { color: '#fff', fontWeight: '800', fontSize: 14, letterSpacing: 0.2 },
   fitBox: { flexDirection: 'row', alignItems: 'baseline' },
   fitLabel: { fontSize: 11, color: '#888', marginRight: 4, fontWeight: '600' },
   fitValue: { fontSize: 16, color: '#00C49A', fontWeight: '800' },
   cardTitle: { fontSize: 17, fontWeight: '800', color: '#111', marginBottom: 4, lineHeight: 24 },
+  cardTitleInline: { flex: 1, fontSize: 17, fontWeight: '800', color: '#111', lineHeight: 24, marginRight: 10 },
   cardSource: { fontSize: 12, color: '#888', marginBottom: 10 },
   tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12, alignItems: 'center' },
   tagGreen: { backgroundColor: '#e6f9f4', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
