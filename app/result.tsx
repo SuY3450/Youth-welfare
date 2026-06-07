@@ -19,6 +19,8 @@ interface Policy {
   fit_score: number;
   similarity: number;
   reasons: string[];
+  conflict_warning?: string;
+  conflict_text_raw?: string;
 }
 
 const KOREAN_REGIONS = new Set([
@@ -43,6 +45,24 @@ const parseDeadlineDate = (deadline: string) => {
     }
   }
   return all.length > 0 ? all[all.length - 1] : null;
+};
+
+// 중복수혜 경고문구를 줄글로 정리 (번호·기호 제거)
+const cleanConflictText = (text?: string) => {
+  if (!text) return '다른 지원사업과 중복 수혜가 제한될 수 있어요.';
+  let t = text
+    .replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, '')        // 원문자 번호 제거
+    .replace(/[➀➁➂➃➄]/g, '')                  // 특수 번호 제거
+    .replace(/[○●◦▶■□❍ㅇ]/g, '')              // 글머리 기호 제거
+    .replace(/\s*[-–]\s*/g, ', ')               // 하이픈 → 쉼표
+    .replace(/[\n\r]+/g, ' ')                    // 줄바꿈 → 공백
+    .replace(/\s{2,}/g, ' ')                     // 연속 공백 정리
+    .replace(/,\s*,/g, ',')                      // 중복 쉼표 정리
+    .replace(/^[,\s]+|[,\s]+$/g, '')             // 앞뒤 쉼표·공백 제거
+    .trim();
+  // 끝에 마침표 없으면 추가
+  if (t && !/[.。]$/.test(t)) t += '.';
+  return t;
 };
 
 const formatDeadline = (deadline?: string) => {
@@ -166,6 +186,8 @@ export default function ResultScreen() {
           ) : null}
         </View>
 
+        <Text style={styles.totalCount}>총 {policies.length}건</Text>
+
         {policies.map((item, index) => {
           const rank = index + 1;
           const friendlyReason = llmReasons.get(item.name);
@@ -241,6 +263,19 @@ export default function ResultScreen() {
                 </View>
               ) : null}
 
+              {item.conflict_warning ? (
+                <View style={styles.conflictBox}>
+                  <View style={styles.conflictBoxHeader}>
+                    <Ionicons name="warning-outline" size={13} color="#B45309" />
+                    <Text style={styles.conflictBoxTitle}>중복수혜 주의</Text>
+                  </View>
+                  <Text style={styles.conflictBoxText}>
+                    {cleanConflictText(item.conflict_text_raw)}
+                  </Text>
+                </View>
+              ) : null}
+
+
               <View style={styles.detailHint}>
                 <Text style={styles.detailHintText}>자세히 보기</Text>
                 <Ionicons name="chevron-forward" size={14} color="#00C49A" />
@@ -268,6 +303,7 @@ const styles = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: '#F7FDFB' },
   container: { flex: 1, paddingHorizontal: 20 },
   pageTitle: { fontSize: 26, fontWeight: '800', color: '#111', marginTop: 16, marginBottom: 16 },
+  totalCount: { fontSize: 13, color: '#888', fontWeight: '600', marginTop: 12, marginBottom: 8, paddingHorizontal: 2 },
   aiSummaryCard: {
     backgroundColor: '#00C49A',
     borderRadius: 14,
@@ -319,6 +355,10 @@ const styles = StyleSheet.create({
   amountBox: { backgroundColor: '#f0faf5', borderRadius: 10, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 10 },
   amountText: { color: '#00C49A', fontWeight: '800', fontSize: 18 },
   reasonBox: { backgroundColor: '#F0FBF7', borderLeftWidth: 3, borderLeftColor: '#00C49A', borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, marginTop: 4, marginBottom: 10 },
+  conflictBox: { backgroundColor: '#FFFBEB', borderLeftWidth: 3, borderLeftColor: '#F59E0B', borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, marginTop: 4, marginBottom: 10 },
+  conflictBoxHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 4, gap: 4 },
+  conflictBoxTitle: { fontSize: 12, fontWeight: '700', color: '#B45309' },
+  conflictBoxText: { fontSize: 12, color: '#92400E', lineHeight: 18 },
   reasonBoxHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
   reasonBoxTitle: { fontSize: 12, fontWeight: '700', color: '#00A582', marginLeft: 4, letterSpacing: 0.2 },
   reasonBoxText: { fontSize: 13.5, color: '#333', lineHeight: 21 },

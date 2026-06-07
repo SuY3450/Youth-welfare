@@ -112,28 +112,9 @@ def check_conflicts(policies: list) -> list:
         conflict_info = extract_conflict_info(raw_text, exclude_target)
 
         if conflict_info["has_conflict"]:
-            conflict_type = conflict_info["conflict_type"]
-            same_type = []
-
-            for other in policies:
-                if other["name"] == policy["name"]:
-                    continue
-                if conflict_type == "주거지원":
-                    if any(kw in other["name"] for kw in ["월세", "주거비", "임차"]):
-                        same_type.append(other["name"])
-                elif conflict_type == "타지자체":
-                    if other.get("source", "") != policy.get("source", ""):
-                        same_type.append(other["name"])
-                elif conflict_type == "주거급여":
-                    if "주거급여" in other["name"]:
-                        same_type.append(other["name"])
-
-            if same_type:
-                policy["conflict_with"] = same_type[:3]
-                policy["conflict_warning"] = (
-                    f"⚠️ 정책 원문에 중복수혜 불가 명시: \"{conflict_info['conflict_text'][:50]}...\""
-                )
-                policy["conflict_source"] = "raw_text/exclude_target 기반"
+            policy["conflict_warning"] = "⚠️ 중복수혜 불가"
+            policy["conflict_text_raw"] = conflict_info["conflict_text"].strip()
+            policy["conflict_source"] = "raw_text/exclude_target 기반"
 
     return policies
 

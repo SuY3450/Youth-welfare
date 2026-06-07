@@ -41,7 +41,7 @@ interface DocumentLink {
   ai_verified?: boolean;
 }
 
-type SectionKey = 'content' | 'target' | 'method' | 'period' | 'documents' | 'contact';
+type SectionKey = 'content' | 'target' | 'method' | 'period' | 'documents' | 'contact' | 'selectMethod';
 
 const SECTION_HEADERS: { key: SectionKey; pattern: string }[] = [
   { key: 'content', pattern: '지원\\s*내용' },
@@ -74,6 +74,10 @@ const SECTION_HEADERS: { key: SectionKey; pattern: string }[] = [
   { key: 'contact', pattern: '문의\\s*처' },
   { key: 'contact', pattern: '문의' },
   { key: 'contact', pattern: '연락처' },
+  { key: 'selectMethod', pattern: '선정\\s*방법' },
+  { key: 'selectMethod', pattern: '선발\\s*방법' },
+  { key: 'selectMethod', pattern: '선정\\s*기준' },
+  { key: 'selectMethod', pattern: '심사\\s*기준' },
 ];
 
 const SECTION_TITLE: Record<SectionKey, string> = {
@@ -83,11 +87,12 @@ const SECTION_TITLE: Record<SectionKey, string> = {
   period: '모집 일정',
   documents: '필요 서류',
   contact: '문의처',
+  selectMethod: '선정 방법',
 };
 
 const parseSections = (rawText?: string): Record<SectionKey, string> => {
   const result: Record<SectionKey, string> = {
-    content: '', target: '', method: '', period: '', documents: '', contact: '',
+    content: '', target: '', method: '', period: '', documents: '', contact: '', selectMethod: '',
   };
   if (!rawText) return result;
   type Hit = { key: SectionKey; headerStart: number; contentStart: number };
@@ -125,19 +130,58 @@ const parseSections = (rawText?: string): Record<SectionKey, string> => {
 
 const cleanRawText = (text?: string) => {
   if (!text) return '';
-  return text
+
+  let t = text
+    // ── 1. 불필요한 꼬리 문구 + 선정방법 이하 제거 ──
     .replace(/관심 정책정보 목록.*$/s, '')
     .replace(/유관기관 사이트.*$/s, '')
     .replace(/본 정보는 제공기관의[^.]*\./g, '')
-    .replace(/\n{3,}/g, '\n\n')
+    .replace(/※\s*본 페이지[^。\n]*/g, '')
+    .replace(/\(출처[^)]*\)/g, '')
+    // 선정방법 키워드 이후 텍스트 제거 (별도 섹션에서 보여주므로 중복 방지)
+    // ㅇ (선정방법), ○ 선정방법, □ 선정기준 등 앞의 기호·괄호까지 같이 제거
+    .replace(/\n[^\n]*[\(（]?\s*(선정\s*방법|선발\s*방법|선정\s*기준|심사\s*기준)[\s\S]*$/i, '')
+
+
+    // ── 3. 꺾쇠 섹션 제목 <...> → 줄바꿈 추가 ──
+    .replace(/<([^>]{1,30})>/g, '\n■ $1\n')
+
+    // ── 4. 섹션 기호 앞에 줄바꿈 삽입 ──
+    .replace(/([^\n])(□|■|▶|◆|◇|▣|◎)/g, '$1\n$2')
+    .replace(/([^\n])(ㅇ\s)/g, '$1\n$2')
+    .replace(/([^\n])(❍\s)/g, '$1\n$2')
+
+    // ── 5. 들여쓰기 공백 정리 (줄 앞 공백 2칸 이상 → 그냥 제거) ──
+    .replace(/\n {2,}/g, '\n')
+    .replace(/\n\t+/g, '\n')
+
+    // ── 6. 특수 기호 통일 ──
+    .replace(/❍/g, 'ㅇ')
+    .replace(/➀/g, '①')
+    .replace(/➁/g, '②')
+    .replace(/➂/g, '③')
+    .replace(/▸/g, '·')
+    .replace(/‧/g, '·')
+    .replace(/‑/g, '-')
+    .replace(/‧/g, '·')  // 특수 점 문자
+
+    // ── 7. 연속 빈줄 정리 ──
     .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n[ \t]+/g, '\n')
-    .replace(/□/g, '\n□')
-    .replace(/○/g, '\n○')
-    .replace(/◇/g, '\n◇')
-    .replace(/▶/g, '\n▶')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+
+  // ── 8. 줄 단위 중복 제거 (이미 나온 줄이 다시 나오면 그 줄만 제거) ──
+  const seen = new Set<string>();
+  t = t.split('\n').filter(line => {
+    const key = line.trim();
+    if (key === '') return true; // 빈 줄은 유지
+    if (key.length < 10) return true; // 짧은 줄(기호 등)은 중복 체크 제외
+    if (seen.has(key)) return false; // 이미 나온 줄 → 제거
+    seen.add(key);
+    return true;
+  }).join('\n');
+
+  return t;
 };
 
 const cleanPeriodText = (text: string) => {
@@ -149,6 +193,102 @@ const cleanPeriodText = (text: string) => {
     .replace(/○/g, '\n○')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+};
+
+// ──────────────────────────────────────────
+// 정책 내용 텍스트 렌더러 (줄바꿈·불릿 처리)
+// ──────────────────────────────────────────
+const HEADER_SYMBOLS = /^[□■○●▶◆◇▣◎▪▫ㅇ\-―•·❍]+\s*/;
+const INLINE_SYMBOLS = /^[□■○●▶◆◇▣◎▪▫·•ㅇ❍\-―]\s*/;
+
+const isSubHeader = (line: string) => {
+  const trimmed = line.trim();
+  // 콜론/특수 끝문자로 끝나는 짧은 줄
+  if (
+    (trimmed.endsWith(':') || trimmed.endsWith('：') || trimmed.endsWith('】') || trimmed.endsWith('▶')) &&
+    trimmed.length <= 40
+  ) return true;
+  // □■▶◆【■ 으로 시작하는 줄
+  if (/^[□■▶◆【]/.test(trimmed)) return true;
+  // ㅇ (목적), ㅇ (대상) 등 — ㅇ + 공백 + 괄호 패턴
+  if (/^ㅇ\s*[\(（]/.test(trimmed)) return true;
+  // <...> 꺾쇠 제목으로 변환된 것 (■ 로 시작)
+  if (/^■\s/.test(trimmed) && trimmed.length <= 40) return true;
+  return false;
+};
+
+const RichText = ({ text }: { text: string }) => {
+  const lines = text
+    .replace(/\n{3,}/g, '\n\n')
+    .split('\n')
+    .map((l) => l.trim());
+
+  const elements: React.ReactElement[] = [];
+  let key = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+
+    // 빈 줄 → 여백
+    if (raw === '') {
+      elements.push(<View key={key++} style={{ height: 8 }} />);
+      continue;
+    }
+
+    const clean = raw.replace(HEADER_SYMBOLS, '').trim();
+
+    if (isSubHeader(raw)) {
+      // 첫 번째 소제목이 아닐 때만 위에 여백 추가
+      if (elements.length > 0) {
+        elements.push(<View key={key++} style={{ height: 12 }} />);
+      }
+      elements.push(
+        <Text key={key++} style={richStyles.subHeader}>
+          {clean.replace(/[:：]$/, '')}
+        </Text>
+      );
+      // 소제목 아래 여백
+      elements.push(<View key={key++} style={{ height: 4 }} />);
+    } else {
+      // 일반 내용 → 불릿
+      const content = raw.replace(INLINE_SYMBOLS, '').trim();
+      elements.push(
+        <View key={key++} style={richStyles.bulletRow}>
+          <Text style={richStyles.bullet}>・</Text>
+          <Text style={richStyles.bulletText}>{content}</Text>
+        </View>
+      );
+    }
+  }
+
+  return <View>{elements}</View>;
+};
+
+const richStyles = {
+  subHeader: {
+    fontSize: 14,
+    fontWeight: '400' as const,
+    color: '#111',
+    marginTop: 0,
+    marginBottom: 0,
+  },
+  bulletRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'flex-start' as const,
+    marginBottom: 5,
+  },
+  bullet: {
+    fontSize: 14,
+    color: '#00C49A',
+    marginRight: 4,
+    lineHeight: 22,
+  },
+  bulletText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#333',
+    lineHeight: 22,
+  },
 };
 
 const parseReason = (reason: string) => {
@@ -435,7 +575,7 @@ export default function PolicyDetailScreen() {
         {/* 헤더 섹션 */}
         <View style={styles.heroSection}>
           <View style={styles.heroTop}>
-            {rank ? <View style={styles.rankBadge}><Text style={styles.rankText}>{rank}순위</Text></View> : null}
+            {rank && Number(rank) <= 3 ? <View style={styles.rankBadge}><Text style={styles.rankText}>{rank}순위</Text></View> : null}
             {policy.category ? <View style={styles.categoryBadge}><Text style={styles.categoryText}>{policy.category}</Text></View> : null}
           </View>
           <Text style={styles.policyTitle}>{policy.name}</Text>
@@ -475,11 +615,6 @@ export default function PolicyDetailScreen() {
             <Text style={styles.amountLabel}>💰 지원 금액</Text>
             <Text style={styles.amountValue}>{policy.amount || '금액 정보 없음'}</Text>
           </View>
-          {policy.pvmthd && policy.pvmthd !== '기타' ? (
-            <View style={styles.pvmthdChip}>
-              <Text style={styles.pvmthdText}>{policy.pvmthd}</Text>
-            </View>
-          ) : null}
         </View>
 
         {/* 모집 일정 */}
@@ -491,7 +626,7 @@ export default function PolicyDetailScreen() {
             </View>
             <View style={styles.infoCard}>
               {policy.registered_at ? (
-                <View style={styles.infoRow}>
+                <View style={[styles.infoRow, !deadline && !sections.period && { borderBottomWidth: 0 }]}>
                   <Text style={styles.infoRowLabel}>등록일</Text>
                   <Text style={styles.infoRowValue}>{policy.registered_at}</Text>
                 </View>
@@ -508,7 +643,7 @@ export default function PolicyDetailScreen() {
                 </View>
               ) : null}
               {sections.period ? (
-                <View style={styles.infoBlock}>
+                <View style={[styles.infoBlock, { borderBottomWidth: 0 }]}>
                   <Text style={styles.infoBlockLabel}>신청 기간</Text>
                   <Text style={styles.infoBlockValue}>{cleanPeriodText(sections.period)}</Text>
                 </View>
@@ -525,25 +660,25 @@ export default function PolicyDetailScreen() {
           </View>
           <View style={styles.infoCard}>
             {targetItems.map((it, i) => (
-              <View key={i} style={[styles.infoRow, i === targetItems.length - 1 && !sections.target && !policy.add_qlfc && { borderBottomWidth: 0 }]}>
+              <View key={i} style={[styles.infoRow, i === targetItems.length - 1 && { borderBottomWidth: 0 }]}>
                 <Text style={styles.infoRowLabel}>{it.label}</Text>
                 <Text style={styles.infoRowValue}>{it.value}</Text>
               </View>
             ))}
             {sections.target ? (
-              <View style={styles.infoBlock}>
+              <View style={[styles.infoBlock, !policy.add_qlfc || policy.add_qlfc.trim() === '-' || policy.add_qlfc.trim() === '' ? { borderBottomWidth: 0 } : {}]}>
                 <Text style={styles.infoBlockLabel}>상세 자격</Text>
                 <Text style={styles.infoBlockValue}>{sections.target}</Text>
               </View>
             ) : null}
-            {policy.add_qlfc ? (
-              <View style={[styles.infoBlock, { borderTopWidth: sections.target ? 1 : 0 }]}>
+            {policy.add_qlfc && policy.add_qlfc.trim() !== '-' && policy.add_qlfc.trim() !== '' ? (
+              <View style={[styles.infoBlock, { borderBottomWidth: 0, paddingTop: 14, paddingBottom: 14 }]}>
                 <Text style={styles.infoBlockLabel}>추가 자격 요건</Text>
-                <Text style={styles.infoBlockValue}>{policy.add_qlfc}</Text>
+                <RichText text={policy.add_qlfc} />
               </View>
             ) : null}
           </View>
-          {policy.exclude_target ? (
+          {policy.exclude_target && policy.exclude_target.trim() !== '-' && policy.exclude_target.trim() !== '' ? (
             <View style={styles.warnBox}>
               <View style={styles.warnHeader}>
                 <Ionicons name="warning" size={16} color="#D85B4A" />
@@ -562,7 +697,7 @@ export default function PolicyDetailScreen() {
               <Text style={styles.sectionTitle}>정책 내용</Text>
             </View>
             <View style={styles.descBox}>
-              <Text style={styles.descText}>{sections.content || cleanRawText(policy.raw_text)}</Text>
+              <RichText text={sections.content || cleanRawText(policy.raw_text)} />
             </View>
           </View>
         ) : null}
@@ -575,20 +710,20 @@ export default function PolicyDetailScreen() {
               <Text style={styles.sectionTitle}>{SECTION_TITLE.method}</Text>
             </View>
             <View style={styles.descBox}>
-              <Text style={styles.descText}>{sections.method}</Text>
+              <RichText text={sections.method} />
             </View>
           </View>
         ) : null}
 
         {/* 선정 방법 */}
-        {policy.select_method ? (
+        {(policy.select_method || sections.selectMethod) ? (
           <View style={styles.section}>
             <View style={styles.sectionTitleRow}>
               <View style={styles.sectionDot} />
               <Text style={styles.sectionTitle}>선정 방법</Text>
             </View>
             <View style={styles.descBox}>
-              <Text style={styles.descText}>{policy.select_method}</Text>
+              <RichText text={policy.select_method || sections.selectMethod} />
             </View>
           </View>
         ) : null}
