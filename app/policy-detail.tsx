@@ -109,35 +109,16 @@ const parseSections = (rawText?: string): Record<SectionKey, string> => {
   for (let i = 0; i < dedup.length; i++) {
     const cur = dedup[i];
     const nxt = dedup[i + 1];
-<<<<<<< HEAD
-    const start = cur.contentStart;
-    const end = nxt ? nxt.headerStart : rawText.length;
-    let chunk = rawText.slice(start, end).trim();
-=======
     let chunk = rawText.slice(cur.contentStart, nxt ? nxt.headerStart : rawText.length).trim();
->>>>>>> origin/feature/yunji
     chunk = chunk
       .replace(/관심 정책정보 목록.*$/s, '')
       .replace(/유관기관 사이트.*$/s, '')
       .replace(/본 정보는 제공기관의[^.]*\./g, '')
-<<<<<<< HEAD
-      // 끝에 매달린 불릿/공백 제거 (다음 섹션 헤더의 prefix가 남은 것)
-      .replace(/[\s○■▶◆◇▣◎·\-]+$/u, '')
-      // 시작에 붙은 불릿/공백 제거
-      .replace(/^[\s○■▶◆◇▣◎·\-]+/u, '')
-      .trim();
-    if (chunk && !result[cur.key]) {
-      result[cur.key] = chunk;
-    } else if (chunk && result[cur.key]) {
-      result[cur.key] += '\n\n' + chunk;
-    }
-=======
       .replace(/[\s○■▶◆◇▣◎·\-]+$/u, '')
       .replace(/^[\s○■▶◆◇▣◎·\-]+/u, '')
       .trim();
     if (chunk && !result[cur.key]) result[cur.key] = chunk;
     else if (chunk && result[cur.key]) result[cur.key] += '\n\n' + chunk;
->>>>>>> origin/feature/yunji
   }
   return result;
 };
