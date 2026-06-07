@@ -1,4 +1,4 @@
-name: 온통청년 자동 크롤링
+name: 청년정책 자동 크롤링
 on:
   schedule:
     - cron: '0 17 * * *'
@@ -22,10 +22,13 @@ jobs:
       - name: 라이브러리 설치
         run: pip install -r requirements.txt
 
-      - name: 크롤링
+      - name: 온통청년 크롤링
         env:
           ONTONG_API_KEY: ${{ secrets.ONTONG_API_KEY }}
         run: python crawlers/ontongyouth.py
+
+      - name: 자치구 크롤링
+        run: python crawlers/seoulyouth.py
 
       - name: 전처리
         run: python process/preprocess.py

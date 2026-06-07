@@ -1,14 +1,41 @@
 import json
 import hashlib
 import os
-import re  # 추가
+import re
 
-RAW_PATH   = "data/raw/승현_온통청년.json"
-CLEAN_PATH = "data/clean/clean_final.json"
+# 여러 raw 소스를 함께 전처리 (온통청년 + 서울청년몽땅 자치구)
+RAW_PATHS = [
+    "data/raw/승현_온통청년.json",
+    "data/raw/seoulyouth.json",          # seoulyouth.py 결과
+]
+CLEAN_PATH = "data/clean/clean_final.json"   # 누적 저장본
+NEW_PATH   = "data/clean/new_policies.json"  # 이번에 새로 추가된 것만 (ChromaDB upsert용)
+
 
 def make_id(policy: dict) -> str:
     key = f"{policy['source']}_{policy['name']}"
     return hashlib.md5(key.encode()).hexdigest()[:12]
+
+
+def name_key(item: dict):
+    """공고명 + 자치구 기준 중복 식별 (연도·공백만 제거, '구'는 유지해 강남/강서 구분)"""
+    n = re.sub(r"\s+", "", re.sub(r"\d{4}", "", item.get("name", "")))
+    return (n, item.get("sub_region", ""))
+
+
+def load_raw() -> list:
+    """RAW_PATHS의 모든 파일을 읽어 하나의 리스트로 합침"""
+    raw = []
+    for path in RAW_PATHS:
+        if not os.path.exists(path):
+            print(f"⚠️  없음, 건너뜀: {path}")
+            continue
+        with open(path, encoding="utf-8") as f:
+            items = json.load(f)
+        print(f"  · {path}: {len(items)}건")
+        raw.extend(items)
+    return raw
+
 
 def make_embedding_text(p: dict) -> str:
     parts = [
@@ -43,7 +70,7 @@ def make_embedding_text(p: dict) -> str:
     return " | ".join(part for part in parts if part).strip()
 
 # ──────────────────────────────────────────
-# 추가: 4개 필드 추출 함수
+# 4개 필드 추출 함수 (원본 그대로)
 # ──────────────────────────────────────────
 def extract_employment(p: dict) -> str:
     job = p.get("job", "")
@@ -108,10 +135,8 @@ def extract_housing(p: dict) -> str:
 # ──────────────────────────────────────────
 
 def preprocess():
-    with open(RAW_PATH, encoding="utf-8") as f:
-        raw = json.load(f)
-
-    print(f"전처리 시작: {len(raw)}건")
+    raw = load_raw()
+    print(f"전처리 시작: 총 {len(raw)}건")
 
     results = []
     seen_ids = set()
@@ -163,12 +188,40 @@ def preprocess():
             "employment":      extract_employment(p),
         })
 
+    # ── 기존 clean_final 에 신규만 병합 (id + 공고명+자치구 중복 차단) ──
     os.makedirs("data/clean", exist_ok=True)
-    with open(CLEAN_PATH, "w", encoding="utf-8") as f:
-        json.dump(results, f, ensure_ascii=False, indent=2)
 
-    print(f"전처리 완료: {len(results)}건 → {CLEAN_PATH}")
-    return results
+    if os.path.exists(CLEAN_PATH):
+        with open(CLEAN_PATH, encoding="utf-8") as f:
+            existing = json.load(f)
+    else:
+        existing = []
+
+    existing_ids   = {e["id"] for e in existing}
+    existing_names = {name_key(e) for e in existing}
+
+    new_items = []
+    for r in results:
+        if r["id"] in existing_ids:
+            continue
+        if name_key(r) in existing_names:
+            continue
+        existing_ids.add(r["id"])
+        existing_names.add(name_key(r))
+        new_items.append(r)
+
+    merged = existing + new_items
+
+    with open(CLEAN_PATH, "w", encoding="utf-8") as f:
+        json.dump(merged, f, ensure_ascii=False, indent=2)
+    with open(NEW_PATH, "w", encoding="utf-8") as f:
+        json.dump(new_items, f, ensure_ascii=False, indent=2)
+
+    print(f"전처리 완료: 신규 {len(new_items)}건 추가 → 전체 {len(merged)}건")
+    print(f"   → {CLEAN_PATH}")
+    print(f"   → {NEW_PATH} (신규만, ChromaDB upsert용)")
+    return new_items
+
 
 if __name__ == "__main__":
     preprocess()
