@@ -132,6 +132,20 @@ def extract_housing(p: dict) -> str:
     if re.search(r'자가|자기\s*소유|주택\s*소유', text): results.add("자가")
     return "" if not results else ", ".join(sorted(results))
 
+def infer_category(p: dict) -> str:
+    """category(중분류)가 비어있는 소스(자치구·경기 등)를 lclsf + 본문으로 추정"""
+    lclsf = p.get("lclsf", "")
+    text  = f"{p.get('name','')} {p.get('raw_text','')} {p.get('job','')}"
+    if "일자리" in lclsf:
+        return "창업" if re.search(r'창업|스타트업|예비\s*창업|창업가', text) else "취업"
+    if "주거" in lclsf:
+        return "주거"
+    if "금융" in lclsf:                       # 자치구 '금융복지'
+        return "금융" if re.search(r'대출|융자|이자|금리|보증|예금|적금|통장|자산형성|저축', text) else "복지"
+    if "교육" in lclsf or "문화" in lclsf:     # 자치구 '교육문화'
+        return "문화" if re.search(r'문화|예술|공연|전시|체육|여가', text) else "교육"
+    return ""
+
 # ──────────────────────────────────────────
 
 def preprocess():
@@ -151,7 +165,7 @@ def preprocess():
             "id":              pid,
             "name":            p.get("name", ""),
             "lclsf":           p.get("lclsf", ""),
-            "category":        p.get("category", ""),
+            "category":        p.get("category") or infer_category(p),
             "region":          p.get("region", ""),
             "sub_region":      p.get("sub_region", ""),
             "source":          p.get("source", ""),
@@ -181,7 +195,6 @@ def preprocess():
             "select_method":   p.get("select_method", ""),
             "submit_docs":     p.get("submit_docs", ""),
             "embedding_text":  make_embedding_text(p),
-            # 4개 필드 — 빈값 대신 바로 추출
             "benefit_type":    extract_benefit_type(p),
             "income_max_pct":  extract_income_max_pct(p),
             "housing":         extract_housing(p),
