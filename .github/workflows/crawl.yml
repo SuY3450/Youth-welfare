@@ -30,6 +30,9 @@ jobs:
       - name: 자치구 크롤링
         run: python crawlers/seoulyouth.py
 
+      - name: 경기 시군 크롤링
+        run: python crawlers/gyeonggi.py
+
       - name: 전처리
         run: python process/preprocess.py
 
