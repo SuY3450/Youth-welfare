@@ -6,8 +6,11 @@ import re
 # 여러 raw 소스를 함께 전처리 (온통청년 + 서울청년몽땅 자치구)
 RAW_PATHS = [
     "data/raw/승현_온통청년.json",
-    "data/raw/seoulyouth.json",          # seoulyouth.py 결과
+    "data/raw/seoulyouth.json",
+    "data/raw/gyeonggi.json",        # ← 추가
 ]
+
+
 CLEAN_PATH = "data/clean/clean_final.json"   # 누적 저장본
 NEW_PATH   = "data/clean/new_policies.json"  # 이번에 새로 추가된 것만 (ChromaDB upsert용)
 
@@ -137,7 +140,7 @@ def infer_category(p: dict) -> str:
     lclsf = p.get("lclsf", "")
     text  = f"{p.get('name','')} {p.get('raw_text','')} {p.get('job','')}"
     if "일자리" in lclsf:
-        return "창업" if re.search(r'창업|스타트업|예비\s*창업|창업가', text) else "취업"
+        return "창업" if re.search(r'창업|스타트업|예비\s*창업|창업가|멘토링|창업지원|스타트업', text) else "취업"
     if "주거" in lclsf:
         return "주거"
     if "금융" in lclsf:                       # 자치구 '금융복지'
