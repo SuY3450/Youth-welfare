@@ -342,11 +342,11 @@ def generate_multi_queries(user_info, category):
 #  하이브리드 검색
 # ══════════════════════════════════════════════════════════
 CATEGORY_MAP = {
-    "주거":   ["주택 및 거주지","전월세 및 주거급여 지원","기숙사","주택 및 거주지,전월세 및 주거급여 지원"],
-    "금융":   ["전월세 및 주거급여 지원"],
+    "주거":   ["주택 및 거주지","전월세 및 주거급여 지원","기숙사","주거","주택 및 거주지,전월세 및 주거급여 지원"],
+    "금융":   ["전월세 및 주거급여 지원","금융","복지"],
     "취업":   ["취업","재직자"],
     "창업":   ["창업","창업,취업"],
-    "교육":   ["교육비지원"],
+    "교육":   ["교육비지원","교육","문화"],
     "일자리": ["취업","창업","재직자","창업,취업"],
 }
 KOREAN_REGIONS = {
@@ -400,6 +400,8 @@ def calculate_fit_score(policy_meta, user_info, similarity):
     # ── 나이 (20점) ──
     age_min = int(policy_meta.get("age_min") or 0)
     age_max = int(policy_meta.get("age_max") or 99)
+    if age_max == 0:        # "0세~0세" = 나이 조건 무관(미상)
+        age_max = 99
     if age_min == 0 and age_max == 99:
         reasons.append("나이 ⚠️ (조건 미상 → 통과)"); score += 10
     elif age_min <= user_info["age"] <= age_max:
@@ -442,9 +444,10 @@ def calculate_fit_score(policy_meta, user_info, similarity):
     # ── 직업/취업상태 (15점) — job 사용 ──
     job = str(full.get("job", "") or policy_meta.get("job", ""))
     user_emp = user_info["employment"]
+    emp_terms = [user_emp] + SYNONYM_MAP.get(user_emp, [])   # 동의어(근무=재직, 미취업=구직 등)까지 인정
     if not job or job in ["제한없음", "무관", ""]:
         reasons.append("직업 ✅ (제한없음)"); score += 15
-    elif user_emp in job or job in user_emp:
+    elif any(t in job for t in emp_terms) or job in user_emp:
         reasons.append(f"직업 ✅ ({job[:20]})"); score += 15
     elif any(kw in job for kw in ["청년", "누구나", "제한없음"]):
         reasons.append(f"직업 ✅ ({job[:20]})"); score += 15
