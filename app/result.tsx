@@ -21,6 +21,7 @@ interface Policy {
   reasons: string[];
   conflict_warning?: string;
   conflict_text_raw?: string;
+  document_links?: DocumentLink[];
 }
 
 const KOREAN_REGIONS = new Set([
@@ -152,7 +153,10 @@ export default function ResultScreen() {
   });
 
   const goToDetail = (policy: Policy, rank: number) => {
-    const docLinks = llmDocLinks.get(policy.name);
+    // 추천 정책 전부에 발급처가 부착돼 있으면 그걸 우선 사용, 없으면 기존 results 맵 사용
+    const docLinks = (policy.document_links && policy.document_links.length > 0)
+      ? policy.document_links
+      : llmDocLinks.get(policy.name);
     router.push({
       pathname: '/policy-detail',
       params: {

@@ -1,18 +1,11 @@
 """
-청년 복지 정책 RAG 파이프라인 v4
-=================================================
-새 데이터 구조 (36개 필드) 대응:
-  - job 필드로 취업상태 판단 (employment 비어있음)
-  - earn_cnd 필드로 소득 조건 판단 (income_max_pct 비어있음)
-  - add_qlfc, exclude_target을 Gemini 프롬프트에 포함
-  - pvmthd(지원방식) 결과에 포함
-  - sub_region: raw_text vs embedding_text 스마트 추출
-  - amount: raw_text + embedding_text에서 자동 추출
+청년 복지 정책 RAG 파이프라인 v4+v5 통합
 """
 import os, time, json, re
 import urllib.request
 import urllib.error
 import threading
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -23,9 +16,13 @@ from .conflict_checker import check_conflicts, get_optimal_combination, print_co
 
 load_dotenv()
 
-# ══════════════════════════════════════════════════════════
-#  시군구 사전
-# ══════════════════════════════════════════════════════════
+def get_llm():
+    return ChatGoogleGenerativeAI(
+        model="gemini-2.5-flash",
+        google_api_key=os.getenv("GEMINI_API_KEY"),
+        max_retries=2,
+    )
+
 SIGUNGU_MAP = {
     "서울특별시": [
         "종로구","중구","용산구","성동구","광진구","동대문구","중랑구","성북구",
@@ -53,91 +50,304 @@ SIGUNGU_MAP = {
 
 
 def extract_sub_region_smart(raw_text: str, emb_text: str, region: str) -> str:
-    """
-    raw_text와 embedding_text에서 시군구 스마트 추출.
-    1. raw_text에서 추출
-    2. embedding_text에서 추출
-    3. 둘 다 있으면 → 일치하면 사용, 불일치하면 embedding_text 우선 (구조화 데이터)
-    4. 하나만 있으면 → 그거 사용
-    """
     candidates = SIGUNGU_MAP.get(region, [])
     if not candidates:
         return ""
-
-    raw_found = ""
-    emb_found = ""
-
+    raw_found, emb_found = "", ""
     for sg in candidates:
         if sg in (raw_text or ""):
-            raw_found = sg
-            break
-
+            raw_found = sg; break
     for sg in candidates:
         if sg in (emb_text or ""):
-            emb_found = sg
-            break
-
+            emb_found = sg; break
     if raw_found and emb_found:
-        if raw_found == emb_found:
-            return raw_found  # 일치
-        else:
-            return emb_found  # 불일치 → embedding_text 우선
-    elif emb_found:
-        return emb_found
-    elif raw_found:
-        return raw_found
-    return ""
+        return raw_found if raw_found == emb_found else emb_found
+    return emb_found or raw_found
 
 
 def extract_amount_from_text(text: str) -> str:
-    if not text:
-        return ""
-
-    # 단위: 만원 / 천만원 / 억원 / 5자리 이상 원 (welfare 규모만)
+    if not text: return ""
     UNIT = r'(?:천\s*만\s*원|천만\s*원|억\s*원|만\s*원|만원|천만원|억원)'
     AMOUNT = rf'[\d,]+\s*{UNIT}'
-    BIG_RAW_WON = r'[\d,]{5,}\s*원'  # 10,000원 이상 (welfare 최소 규모)
-
-    # 우선순위: 컨텍스트가 명확한 패턴부터
+    BIG_RAW_WON = r'[\d,]{5,}\s*원'
     patterns = [
-        # 1순위: 기간 + 최대 + 금액 + 지원/지급
         rf'(?:월|연|분기)\s*최대\s*{AMOUNT}\s*(?:지급|지원)',
-        # 2순위: 기간 + 금액 + 지원/지급
         rf'(?:월|연|분기)\s*{AMOUNT}\s*(?:지급|지원)',
-        # 3순위: 최대 + 금액 + 지원/지급/한도/보조/대출
         rf'최대\s*{AMOUNT}\s*(?:지급|지원|한도|보조|대출|융자)',
-        # 4순위: 금액 + 지원/지급/한도/보조/대출
         rf'{AMOUNT}\s*(?:지급|지원|한도|보조|대출|융자)',
-        # 5순위: 큰 원 단위 (5자리 이상) + 지원/지급
         rf'{BIG_RAW_WON}\s*(?:지급|지원|한도|보조)',
-        # 6순위: 기간 + 최대 + 금액 (컨텍스트 없어도)
         rf'(?:월|연|분기)\s*최대\s*{AMOUNT}',
-        # 7순위: 기간 + 금액
         rf'(?:월|연|분기)\s*{AMOUNT}',
-        # 8순위: 최대 + 금액
         rf'최대\s*{AMOUNT}',
-        # 9순위: 단순 금액 (단위 명시된 것만)
         AMOUNT,
     ]
-
     for pattern in patterns:
         match = re.search(pattern, text)
-        if match:
-            return match.group(0).strip()
+        if match: return match.group(0).strip()
     return ""
 
 
-# ══════════════════════════════════════════════════════════
-#  소득 조건 파싱 (earn_cnd → 중위소득 % 추출)
-# ══════════════════════════════════════════════════════════
 def parse_income_condition(earn_cnd: str) -> int:
-    """earn_cnd 텍스트에서 중위소득 % 추출. 못 찾으면 0 반환 (무조건 통과)"""
-    if not earn_cnd or earn_cnd == "무관" or earn_cnd == "제한없음":
-        return 0
+    if not earn_cnd or earn_cnd in ("무관", "제한없음"): return 0
     match = re.search(r'(\d+)\s*%', earn_cnd)
-    if match:
-        return int(match.group(1))
+    return int(match.group(1)) if match else 0
+
+
+# ══════════════════════════════════════════════════════════
+#  [v5] 정책 만료 자동 제외 (기간 형식이면 종료일 기준)
+# ══════════════════════════════════════════════════════════
+def is_policy_expired(policy: dict) -> bool:
+    deadline = str(policy.get("deadline", "") or "").strip()
+    if not deadline or deadline == "상시":
+        return False
+
+    # 기간(범위) 형식 대응: "2026. 6.3.~ 6. 17." 처럼 시작~종료 형식이면
+    # "가장 늦은 날(종료일)" 기준으로 만료 판단 (시작일이 지났다고 만료 처리하지 않음)
+    dated = re.findall(r'(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})', deadline)
+    dates = []
+    for y, m, d in dated:
+        try:
+            dates.append(datetime(int(y), int(m), int(d)).date())
+        except Exception:
+            pass
+    # 범위 끝의 연도 없는 날짜("~ 6. 17.")는 시작 연도를 빌려서 처리
+    if dated:
+        year = int(dated[0][0])
+        tail = re.search(r'~\s*(\d{1,2})\.\s*(\d{1,2})\.?', deadline)
+        if tail:
+            try:
+                dates.append(datetime(year, int(tail.group(1)), int(tail.group(2))).date())
+            except Exception:
+                pass
+    if dates:
+        return max(dates) < datetime.now().date()   # 종료일(가장 늦은 날짜) 기준
+
+    # 단일 표준 포맷
+    for fmt in ["%Y-%m-%d", "%Y.%m.%d", "%Y/%m/%d", "%Y년 %m월 %d일"]:
+        try:
+            return datetime.strptime(deadline, fmt).date() < datetime.now().date()
+        except ValueError:
+            continue
+    return False
+
+
+# ══════════════════════════════════════════════════════════
+#  [v5] 빈 필드를 LLM이 raw_text 읽고 채우기 (배치)
+# ══════════════════════════════════════════════════════════
+def llm_batch_fill_missing_fields(policies: list) -> list:
+    """여러 정책 빈 필드를 한 번에 채우기 - API 1번만 호출"""
+    if not policies:
+        return policies
+
+    needs_fill = []
+    for i, p in enumerate(policies):
+        age_min = p.get("age_min", "")
+        age_max = p.get("age_max", "")
+        earn_cnd = p.get("earn_cnd", "")
+        job = p.get("job", "")
+        if (
+            (not age_min or age_min == "0") and (not age_max or age_max == "99")
+        ) or (not earn_cnd or earn_cnd in ("", "무관")) or (not job or job in ("", "제한없음")):
+            needs_fill.append((i, p))
+
+    if not needs_fill:
+        return policies
+
+    policies_text = "\n\n".join([
+        f"[정책{idx+1}] {p.get('name','')[:30]}\n"
+        f"  원문: {str(p.get('raw_text',''))[:400]}\n"
+        f"  임베딩: {str(p.get('embedding_text',''))[:200]}"
+        for idx, (_, p) in enumerate(needs_fill)
+    ])
+
+    try:
+        llm = get_llm()
+        prompt = f"""아래 정책들의 원문을 읽고 각 정책의 자격조건을 추출하세요.
+원문에 없으면 "미상"으로 답하세요.
+
+[정책 목록]
+{policies_text}
+
+JSON 형식으로만 응답 (마크다운 없이):
+{{
+  "results": [
+    {{
+      "index": 1,
+      "age_min": "숫자만 또는 미상",
+      "age_max": "숫자만 또는 미상",
+      "earn_cnd": "소득 조건 또는 미상",
+      "job": "직업 조건 또는 미상"
+    }}
+  ]
+}}"""
+        response = llm.invoke([HumanMessage(content=prompt)])
+        result = json.loads(response.content.replace("```json","").replace("```","").strip())
+
+        for r in result.get("results", []):
+            idx = r.get("index", 0) - 1
+            if 0 <= idx < len(needs_fill):
+                orig_idx, p = needs_fill[idx]
+                age_min = p.get("age_min", "")
+                age_max = p.get("age_max", "")
+                earn_cnd = p.get("earn_cnd", "")
+                job = p.get("job", "")
+
+                if (not age_min or age_min == "0") and r.get("age_min","미상") != "미상":
+                    policies[orig_idx]["age_min"] = r["age_min"]
+                if (not age_max or age_max == "99") and r.get("age_max","미상") != "미상":
+                    policies[orig_idx]["age_max"] = r["age_max"]
+                if (not earn_cnd or earn_cnd in ("","무관")) and r.get("earn_cnd","미상") != "미상":
+                    policies[orig_idx]["earn_cnd"] = r["earn_cnd"]
+                if (not job or job in ("","제한없음")) and r.get("job","미상") != "미상":
+                    policies[orig_idx]["job"] = r["job"]
+
+        print(f"   🧠 LLM 배치 필드 보완: {len(needs_fill)}건 → API 1번 호출!")
+    except Exception as e:
+        print(f"   ⚠️ LLM 배치 필드 보완 실패: {e}")
+
+    return policies
+
+
+# ══════════════════════════════════════════════════════════
+#  [v5] LLM 제외 대상 배치 판단 (5개씩 묶어서)
+# ══════════════════════════════════════════════════════════
+def llm_batch_check_exclude(policies: list, user_info: dict) -> list:
+    """5개씩 묶어서 검증 - 토큰 안전 + API 최소화"""
+    if not policies:
+        return []
+
+    all_results = []
+    chunk_size = 5
+
+    for chunk_start in range(0, len(policies), chunk_size):
+        chunk = policies[chunk_start:chunk_start + chunk_size]
+
+        policies_text = "\n\n".join([
+            f"[정책{chunk_start+i+1}] {p['name']}\n"
+            f"  정책 원문: {str(p.get('raw_text',''))[:300]}\n"
+            f"  제외 대상: {str(p.get('exclude_target',''))[:200]}\n"
+            f"  추가 자격: {str(p.get('add_qlfc',''))[:200]}"
+            for i, p in enumerate(chunk)
+        ])
+
+        try:
+            llm = get_llm()
+            prompt = f"""아래 정책들을 읽고 이 사용자가 각 정책에 신청 가능한지 판단하세요.
+
+[사용자 정보]
+- 나이: {user_info['age']}세
+- 거주지: {user_info['region']} {user_info.get('sub_region','')}
+- 취업상태: {user_info['employment']}
+- 소득: 중위소득 {user_info.get('income_pct',100)}%
+- 주거형태: {user_info.get('housing','')}
+- 학력: {user_info.get('education','')}
+
+[검증할 정책 목록]
+{policies_text}
+
+각 정책마다:
+- 정책 원문에 숨어있는 조건까지 확인
+- 제외 대상에 해당하면 excluded = true
+- 추가 자격 조건 미충족이면 excluded = true
+- 모든 조건 충족하면 excluded = false
+
+JSON 형식으로만 응답 (마크다운 없이):
+{{
+  "results": [
+    {{"index": {chunk_start+1}, "excluded": false, "reason": "판단 이유"}},
+    {{"index": {chunk_start+2}, "excluded": false, "reason": "판단 이유"}}
+  ]
+}}"""
+            response = llm.invoke([HumanMessage(content=prompt)])
+            result = json.loads(response.content.replace("```json","").replace("```","").strip())
+            all_results.extend(result.get("results", []))
+            print(f"   🔍 배치 검증 {chunk_start+1}~{chunk_start+len(chunk)}번 완료")
+        except Exception as e:
+            print(f"   ⚠️ 배치 검증 실패 ({chunk_start+1}~{chunk_start+len(chunk)}): {e}")
+
+    return all_results
+
+
+# ══════════════════════════════════════════════════════════
+#  [v5] 최적 포트폴리오 (금액 최대화)
+# ══════════════════════════════════════════════════════════
+def parse_amount_number(amount_str: str) -> int:
+    if not amount_str: return 0
+    match = re.search(r'월\s*(?:최대\s*)?(\d+)\s*만\s*원', amount_str)
+    if match: return int(match.group(1))
+    match = re.search(r'최대\s*([\d,]+)\s*만\s*원', amount_str)
+    if match: return 0
+    match = re.search(r'연\s*([\d,]+)\s*만\s*원', amount_str)
+    if match: return int(match.group(1).replace(",","")) // 12
     return 0
+
+
+def calculate_optimal_portfolio(policies: list) -> dict:
+    total_monthly = 0
+    monthly_policies = []
+    onetime_policies = []
+
+    for p in policies:
+        amount_str = p.get("amount", "")
+        monthly = parse_amount_number(amount_str)
+        if monthly > 0:
+            total_monthly += monthly
+            monthly_policies.append({"name": p["name"], "monthly": monthly, "amount": amount_str})
+        elif amount_str:
+            onetime_policies.append({"name": p["name"], "amount": amount_str})
+
+    return {
+        "total_monthly_만원": total_monthly,
+        "total_monthly_text": f"월 약 {total_monthly}만원" if total_monthly > 0 else "산정 불가",
+        "monthly_policies": monthly_policies,
+        "onetime_policies": onetime_policies,
+    }
+
+
+# ══════════════════════════════════════════════════════════
+#  [v5] AI 챗봇 상담
+# ══════════════════════════════════════════════════════════
+def chat_about_policy(user_question: str, recommended_policies: list, user_info: dict = None) -> str:
+    context = "\n\n".join([
+        f"[{p['name']}]\n"
+        f"지원방식: {p.get('pvmthd','')}\n"
+        f"금액: {p.get('amount','')}\n"
+        f"지역: {p.get('region','')} {p.get('sub_region','')}\n"
+        f"정책 내용: {p.get('raw_text','')[:400]}\n"
+        f"추가 자격: {p.get('add_qlfc','')[:200]}\n"
+        f"제외 대상: {p.get('exclude_target','')[:200]}\n"
+        f"신청 방법: {p.get('apply_method','')[:200]}"
+        for p in recommended_policies[:3]
+    ])
+
+    user_context = ""
+    if user_info:
+        user_context = f"""
+[사용자 정보]
+- {user_info.get('age','')}세 / {user_info.get('region','')} {user_info.get('sub_region','')}
+- 취업: {user_info.get('employment','')} / 소득: 중위 {user_info.get('income_pct',100)}%
+- 주거: {user_info.get('housing','')} / 학력: {user_info.get('education','')}
+"""
+
+    prompt = f"""당신은 청년 복지 정책 전문 상담사입니다.
+아래 추천된 정책 정보를 바탕으로 사용자 질문에 친절하고 정확하게 답변하세요.
+
+정책 원문에 없는 내용은 추측하지 말고 "해당 정보는 정책 원문에 명시되어 있지 않습니다. 관할 기관에 문의해주세요." 라고 답하세요.
+{user_context}
+[추천된 정책 정보]
+{context}
+
+[사용자 질문]
+{user_question}
+
+답변:"""
+
+    try:
+        llm = get_llm()
+        response = llm.invoke([HumanMessage(content=prompt)])
+        return response.content
+    except Exception as e:
+        return f"죄송합니다, 일시적으로 답변을 생성할 수 없습니다. ({e})"
 
 
 # ══════════════════════════════════════════════════════════
@@ -146,7 +356,7 @@ def parse_income_condition(earn_cnd: str) -> int:
 print("임베딩 모델 로딩 중...")
 embeddings = HuggingFaceEmbeddings(
     model_name="jhgan/ko-sroberta-multitask",
-    encode_kwargs={"normalize_embeddings": True},   # 벡터 정규화 (코사인 거리용)
+    encode_kwargs={"normalize_embeddings": True},
 )
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -183,7 +393,18 @@ with open(DATA_PATH, encoding="utf-8") as f:
     policies = json.load(f)
 print(f"📦 {DATA_PATH}: {len(policies)}건")
 
-# ── 메모리 DB + 자동 보완 ────────────────────────────────
+# [v5] 만료 정책 자동 제외
+expired_count = 0
+active_policies = []
+for p in policies:
+    if is_policy_expired(p):
+        expired_count += 1
+    else:
+        active_policies.append(p)
+if expired_count > 0:
+    print(f"⏰ 만료 정책 {expired_count}건 자동 제외 → 유효 {len(active_policies)}건")
+    policies = active_policies
+
 POLICY_DB = {}
 sub_filled, amt_filled = 0, 0
 
@@ -193,30 +414,35 @@ for p in policies:
     emb = str(p.get("embedding_text", ""))
     region = str(p.get("region", ""))
 
-    # sub_region 스마트 추출 (raw vs emb 비교)
     if not p.get("sub_region"):
         extracted = extract_sub_region_smart(raw, emb, region)
         if extracted:
             p["sub_region"] = extracted
             sub_filled += 1
-
-    # amount 추출 (raw + emb)
     if not p.get("amount"):
         extracted = extract_amount_from_text(raw) or extract_amount_from_text(emb)
         if extracted:
             p["amount"] = extracted
             amt_filled += 1
-
     POLICY_DB[pid] = p
 
 print(f"📍 sub_region 보완: {sub_filled}건 (raw vs embedding 스마트 추출)")
 print(f"💰 amount 보완: {amt_filled}건")
 
-# ── ChromaDB 저장 ────────────────────────────────────────
-vectorstore = Chroma(collection_name="welfare_policies", embedding_function=embeddings, persist_directory=CHROMA_DIR, collection_metadata={"hnsw:space": "cosine"})
+vectorstore = Chroma(
+    collection_name="welfare_policies",
+    embedding_function=embeddings,
+    persist_directory=CHROMA_DIR,
+    collection_metadata={"hnsw:space": "cosine"}
+)
 try: vectorstore.delete_collection()
 except: pass
-vectorstore = Chroma(collection_name="welfare_policies", embedding_function=embeddings, persist_directory=CHROMA_DIR, collection_metadata={"hnsw:space": "cosine"})
+vectorstore = Chroma(
+    collection_name="welfare_policies",
+    embedding_function=embeddings,
+    persist_directory=CHROMA_DIR,
+    collection_metadata={"hnsw:space": "cosine"}
+)
 
 texts, metadatas = [], []
 for p in policies:
@@ -258,22 +484,23 @@ _refresh_lock = threading.Lock()
 
 def refresh_data_and_rebuild() -> bool:
     global policies, vectorstore, POLICY_DB
-    if not fetch_latest_data_from_github():
-        return False
+    if not fetch_latest_data_from_github(): return False
     try:
         with open(DATA_PATH, encoding="utf-8") as f:
             new_policies = json.load(f)
-    except:
-        return False
-    if {p.get("id") for p in policies} == {p.get("id") for p in new_policies}:
-        return False
-
+    except: return False
+    if {p.get("id") for p in policies} == {p.get("id") for p in new_policies}: return False
     with _refresh_lock:
         try: vectorstore.delete_collection()
         except: pass
-        vectorstore = Chroma(collection_name="welfare_policies", embedding_function=embeddings, persist_directory=CHROMA_DIR, collection_metadata={"hnsw:space": "cosine"})
+        vectorstore = Chroma(
+            collection_name="welfare_policies",
+            embedding_function=embeddings,
+            persist_directory=CHROMA_DIR,
+            collection_metadata={"hnsw:space": "cosine"}
+        )
         policies.clear()
-        policies.extend(new_policies)
+        policies.extend([p for p in new_policies if not is_policy_expired(p)])
         POLICY_DB.clear()
         for p in policies:
             pid = str(p.get("id",""))
@@ -305,9 +532,6 @@ def refresh_data_and_rebuild() -> bool:
     return True
 
 
-# ══════════════════════════════════════════════════════════
-#  소득/쿼리 설정
-# ══════════════════════════════════════════════════════════
 INCOME_LEVEL_MAP = {
     "50% 이하": 50, "50~100%": 100, "100~150%": 150, "150% 초과": 200,
 }
@@ -338,9 +562,6 @@ def generate_multi_queries(user_info, category):
     ]
 
 
-# ══════════════════════════════════════════════════════════
-#  하이브리드 검색
-# ══════════════════════════════════════════════════════════
 CATEGORY_MAP = {
     "주거":   ["주택 및 거주지","전월세 및 주거급여 지원","기숙사","주거","주택 및 거주지,전월세 및 주거급여 지원"],
     "금융":   ["전월세 및 주거급여 지원","금융","복지"],
@@ -371,24 +592,22 @@ def hybrid_search(user_info, category, top_k=15):
     search_filter = _build_search_filter(category, user_info.get("region",""))
     for query in queries:
         try:
-            vectorstore.max_marginal_relevance_search(query, k=top_k, fetch_k=top_k*3, lambda_mult=0.7, filter=search_filter)
+            vectorstore.max_marginal_relevance_search(
+                query, k=top_k, fetch_k=top_k*3, lambda_mult=0.7, filter=search_filter
+            )
         except: pass
         try:
             scored = vectorstore.similarity_search_with_score(query, k=top_k, filter=search_filter)
             for doc, score in scored:
                 doc_id = doc.metadata.get("name","")
-                # 코사인 거리(0~2)를 유사도 %로 변환 (0=동일 100%, 1=무관 0%)
                 similarity = round(max(0.0, 1 - score) * 100, 2)
-                print(f"   [디버그] 코사인거리={score:.4f} → 유사도={similarity}% | {doc_id[:30]}")  # 임시 확인용
+                print(f"   [디버그] 코사인거리={score:.4f} → 유사도={similarity}% | {doc_id[:30]}")
                 if doc_id not in all_results or all_results[doc_id][1] < similarity:
                     all_results[doc_id] = (doc, similarity)
         except: pass
     return sorted(all_results.values(), key=lambda x: -x[1])[:top_k]
 
 
-# ══════════════════════════════════════════════════════════
-#  적합도 점수 (새 데이터 구조 대응)
-# ══════════════════════════════════════════════════════════
 def calculate_fit_score(policy_meta, user_info, similarity):
     reasons, score, eligible = [], 0, True
     policy_id = policy_meta.get("id", "")
@@ -397,11 +616,9 @@ def calculate_fit_score(policy_meta, user_info, similarity):
     full_amount = str(full.get("amount", "") or policy_meta.get("amount", ""))
     full_sub = str(full.get("sub_region", "") or policy_meta.get("sub_region", ""))
 
-    # ── 나이 (20점) ──
     age_min = int(policy_meta.get("age_min") or 0)
     age_max = int(policy_meta.get("age_max") or 99)
-    if age_max == 0:        # "0세~0세" = 나이 조건 무관(미상)
-        age_max = 99
+    if age_max == 0: age_max = 99
     if age_min == 0 and age_max == 99:
         reasons.append("나이 ⚠️ (조건 미상 → 통과)"); score += 10
     elif age_min <= user_info["age"] <= age_max:
@@ -409,7 +626,6 @@ def calculate_fit_score(policy_meta, user_info, similarity):
     else:
         reasons.append(f"나이 ❌ ({age_min}~{age_max}세 / 현재 {user_info['age']}세)"); eligible = False
 
-    # ── 지역 (20점) ──
     policy_region = (policy_meta.get("region") or "전국").strip()
     policy_sub = full_sub.strip()
     user_region = (user_info.get("region") or "").strip()
@@ -427,24 +643,20 @@ def calculate_fit_score(policy_meta, user_info, similarity):
             reasons.append(f"지역 ❌ ({policy_region} {policy_sub} / 현재 {user_region} {user_sub})"); eligible = False
     else:
         reasons.append(f"지역 ❌ ({policy_region} / 현재 {user_region})"); eligible = False
-    # 지역은 일치하면 전국/시도/시군구 모두 동일하게 20점
-    # (시군구가 더 적합한지는 AI 유사도 점수에서 자연스럽게 반영됨)
 
-    # ── 소득 (15점) — earn_cnd 사용 ──
     earn_cnd = str(full.get("earn_cnd", "") or policy_meta.get("earn_cnd", ""))
     user_income_pct = user_info.get("income_pct", 100)
     income_limit = parse_income_condition(earn_cnd)
     if income_limit == 0:
-        reasons.append(f"소득 ✅ (무관 또는 제한없음)"); score += 15
+        reasons.append("소득 ✅ (무관 또는 제한없음)"); score += 15
     elif user_income_pct <= income_limit:
         reasons.append(f"소득 ✅ (중위 {income_limit}% 이하)"); score += 15
     else:
         reasons.append(f"소득 ❌ (중위 {income_limit}% 이하 필요 / 현재 {user_income_pct}%)"); eligible = False
 
-    # ── 직업/취업상태 (15점) — job 사용 ──
     job = str(full.get("job", "") or policy_meta.get("job", ""))
     user_emp = user_info["employment"]
-    emp_terms = [user_emp] + SYNONYM_MAP.get(user_emp, [])   # 동의어(근무=재직, 미취업=구직 등)까지 인정
+    emp_terms = [user_emp] + SYNONYM_MAP.get(user_emp, [])
     if not job or job in ["제한없음", "무관", ""]:
         reasons.append("직업 ✅ (제한없음)"); score += 15
     elif any(t in job for t in emp_terms) or job in user_emp:
@@ -454,199 +666,55 @@ def calculate_fit_score(policy_meta, user_info, similarity):
     else:
         reasons.append(f"직업 ❌ ({job[:30]} 필요)"); eligible = False
 
-    # ── 유사도 (30점) ──
     score += round(similarity * 30 / 100, 1)
 
     return {
-        "id": policy_id,
-        "name": policy_meta.get("name",""),
-        "lclsf": full.get("lclsf",""),
-        "category": policy_meta.get("category",""),
-        "pvmthd": str(full.get("pvmthd","") or ""),
-        "amount": full_amount,
-        "region": policy_region,
-        "sub_region": full_sub,
-        "source": policy_meta.get("source",""),
-        "source_url": policy_meta.get("source_url",""),
-        "deadline": policy_meta.get("deadline",""),
-        "job": job,
-        "earn_cnd": earn_cnd,
+        "id": policy_id, "name": policy_meta.get("name",""),
+        "lclsf": full.get("lclsf",""), "category": policy_meta.get("category",""),
+        "pvmthd": str(full.get("pvmthd","") or ""), "amount": full_amount,
+        "region": policy_region, "sub_region": full_sub,
+        "source": policy_meta.get("source",""), "source_url": policy_meta.get("source_url",""),
+        "deadline": policy_meta.get("deadline",""), "job": job, "earn_cnd": earn_cnd,
         "raw_text": full_raw,
         "add_qlfc": str(full.get("add_qlfc","") or ""),
         "exclude_target": str(full.get("exclude_target","") or ""),
         "submit_docs": str(full.get("submit_docs","") or ""),
-        "eligible": eligible,
-        "fit_score": round(score, 2),
-        "similarity": similarity,
-        "reasons": reasons,
+        "apply_method": str(full.get("apply_method","") or ""),
+        "eligible": eligible, "fit_score": round(score, 2),
+        "similarity": similarity, "reasons": reasons,
     }
 
 
 # ══════════════════════════════════════════════════════════
-#  Gemini 최종 분석 (새 필드 포함)
+#  URL 검증
 # ══════════════════════════════════════════════════════════
-def analyze_with_llm(user_info, eligible):
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=os.getenv("GEMINI_API_KEY"))
-
-    policies_text = "\n\n".join([
-        f"[{i+1}] {p['name']} (적합도 {p['fit_score']}%)\n"
-        f"  분류: {p['lclsf']} > {p['category']} | 지원방식: {p['pvmthd']}\n"
-        f"  금액: {p['amount'] or '미상'}\n"
-        f"  지역: {p['region']} {p['sub_region']} | 직업조건: {p['job'][:30]}\n"
-        f"  소득조건: {p['earn_cnd'][:30]} | 출처: {p['source']}\n"
-        f"  조건 판단: {' / '.join(p['reasons'])}\n"
-        f"  정책 내용: {p.get('raw_text','')[:400]}\n"
-        f"  추가 자격: {p.get('add_qlfc','')[:200]}\n"
-        f"  제외 대상: {p.get('exclude_target','')[:200]}\n"
-        f"  제출 서류: {p.get('submit_docs','')[:300]}"
-        for i, p in enumerate(eligible[:8])
-    ])
-
-    prompt = f"""당신은 청년 복지 정책 전문가입니다.
-아래 정책들의 '정책 내용', '추가 자격', '제외 대상'을 꼼꼼히 읽고 사용자에게 가장 적합한 정책을 추천하세요.
-
-특히 주의할 점:
-- '제외 대상'에 해당하면 추천하지 마세요.
-- '추가 자격'이 있으면 사용자가 충족하는지 확인하세요.
-- 지역(시/군/구)이 사용자와 맞는지 확인하세요.
-- 지원 금액이 정책 내용에 있으면 반드시 amount에 포함하세요.
-- 지원방식(보조금/대출/현물 등)을 reason에 명시하세요.
-
-[서류 발급처 안내 규칙 - 반드시 준수]
-1. '제출 서류'에 나온 서류명에 대해 발급처와 URL을 document_links로 응답하세요.
-
-2. URL 응답 원칙 — 환각 방지가 최우선:
-   - 본인이 100% 확신하는 한국 정부/공공기관 공식 도메인만 응답하세요.
-   - 도메인은 확실하지만 정확한 경로를 모르면 → 반드시 도메인 루트만 응답 (예: "https://www.example.go.kr/").
-   - 조금이라도 의심되면 url을 null로 두고 search_hint만 응답하세요.
-   - "아마도", "추정", "비슷한 사이트" 같은 경우는 무조건 url=null.
-
-3. 절대 금지 사항:
-   - 도메인 자체를 추측해서 만들지 마세요 (예: youth-welfare.go.kr 같은 가상 도메인 금지).
-   - 본인이 실제로 알지 못하는 사이트는 url=null.
-   - 경로(path)를 임의로 만들지 마세요. 도메인만 확실하면 도메인 루트만 응답.
-   - 마침표 뒤 한글이 붙은 URL 같은 잘못된 형식 금지.
-
-4. URL은 반드시 https://로 시작하고 .go.kr / .or.kr / .kr / .com 등 표준 도메인 형식이어야 합니다.
-
-5. 본인 보관 서류(통장사본, 임대차계약서, 신분증 사본 등)는 url을 null로, source를 "본인 보관"으로 응답.
-
-6. 학교/기관 발급 서류(재학증명서, 졸업증명서 등)는 url을 null로, source를 해당 기관명(예: "○○대학교 행정실")으로 응답.
-
-7. 모르는 발급처는 url=null + search_hint에 "○○ 검색" 같은 구체적 검색 방법 안내.
-
-8. 제출 서류 정보가 비어있으면 document_links는 빈 배열 [].
-
-9. 참고 — 자주 사용되는 공식 도메인 (확신 있을 때만 사용):
-   - 정부24: https://www.gov.kr
-   - 홈택스: https://www.hometax.go.kr
-   - 국민건강보험공단: https://www.nhis.or.kr
-   - 국민연금공단: https://www.nps.or.kr
-   - 고용보험: https://www.ei.go.kr
-   - 워크넷: https://www.work.go.kr
-   - 전자가족관계등록시스템: https://efamily.scourt.go.kr
-   - 위택스: https://www.wetax.go.kr
-   - 인터넷등기소: https://www.iros.go.kr
-   - 복지로: https://www.bokjiro.go.kr
-   - 다른 사이트도 확신 있으면 사용 가능. 단 위 규칙 2~4 엄수.
-
-[사용자 정보]
-- 나이 {user_info['age']}세 / 거주지 {user_info['region']} {user_info.get('sub_region','')}
-- 취업상태 {user_info['employment']} / 소득수준 중위소득 {user_info.get('income_pct',100)}%
-- 주거형태 {user_info.get('housing','')} / 학력 {user_info.get('education','')}
-- 관심분야 {', '.join(user_info.get('interests',[]))}
-
-[자격 충족 정책]
-{policies_text}
-
-JSON 형식으로만 응답 (마크다운 없이):
-{{
-  "results": [
-    {{
-      "name":"정책명",
-      "priority":1,
-      "fit_score":"적합도%",
-      "amount":"실제 지원금액",
-      "pvmthd":"지원방식",
-      "region":"대상 지역",
-      "reason":"정책 내용+추가자격+제외대상 기반 추천 이유 2줄",
-      "document_links":[
-        {{
-          "doc_name":"서류명",
-          "source":"발급기관명",
-          "url":"공식 도메인 URL 또는 null",
-          "search_hint":"URL이 null일 때만 검색 방법 안내",
-          "fee":"수수료 정보"
-        }}
-      ]
-    }}
-  ],
-  "top_recommendation":"1순위 정책명",
-  "total_monthly":"월 예상 수령액 합계",
-  "summary":"사용자에게 맞는 혜택 요약 2~3줄"
-}}"""
-
-    start = time.time()
-    response = llm.invoke([HumanMessage(content=prompt)])
-    return response.content, round(time.time()-start, 2)
-
-
-# ══════════════════════════════════════════════════════════
-#  URL 검증 (Gemini 환각 차단)
-# ══════════════════════════════════════════════════════════
-# 응답이 너무 느린 사이트는 살아있어도 timeout으로 fail 처리
 URL_VALIDATE_TIMEOUT = 2.5
 URL_VALIDATE_WORKERS = 10
 _URL_VALIDATE_CACHE: dict[str, bool] = {}
 _URL_VALIDATE_LOCK = threading.Lock()
-
 _URL_FORMAT_RE = re.compile(r"^https://[a-zA-Z0-9\-._~/?#%&=:+,;@!$'()*]+$")
 
-
 def _looks_like_valid_url(url: str) -> bool:
-    """기본 형식 검증 — http 아님/한글 포함/공백 등 차단."""
-    if not url or not isinstance(url, str):
-        return False
+    if not url or not isinstance(url, str): return False
     url = url.strip()
-    if not url.startswith("https://"):
-        return False
-    if any(ord(c) > 127 for c in url):  # 한글/특수문자 포함
-        return False
-    if not _URL_FORMAT_RE.match(url):
-        return False
+    if not url.startswith("https://"): return False
+    if any(ord(c) > 127 for c in url): return False
+    if not _URL_FORMAT_RE.match(url): return False
     return True
 
-
 def validate_url_live(url: str, timeout: float = URL_VALIDATE_TIMEOUT) -> bool:
-    """HEAD 요청으로 실제 살아있는지 확인. 캐시 사용."""
     with _URL_VALIDATE_LOCK:
         if url in _URL_VALIDATE_CACHE:
             return _URL_VALIDATE_CACHE[url]
-
     ok = False
     try:
-        req = urllib.request.Request(
-            url,
-            method="HEAD",
-            headers={
-                "User-Agent": "Mozilla/5.0 (compatible; youth-welfare-bot)",
-                "Accept": "*/*",
-            },
-        )
+        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "Mozilla/5.0 (compatible; youth-welfare-bot)", "Accept": "*/*"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             ok = resp.status < 400
     except urllib.error.HTTPError as e:
-        # 일부 사이트는 HEAD 막아둠 → GET 1바이트로 재시도
         if e.code in (403, 405, 501):
             try:
-                req = urllib.request.Request(
-                    url,
-                    method="GET",
-                    headers={
-                        "User-Agent": "Mozilla/5.0 (compatible; youth-welfare-bot)",
-                        "Range": "bytes=0-0",
-                    },
-                )
+                req = urllib.request.Request(url, method="GET", headers={"User-Agent": "Mozilla/5.0 (compatible; youth-welfare-bot)", "Range": "bytes=0-0"})
                 with urllib.request.urlopen(req, timeout=timeout) as resp:
                     ok = resp.status < 400
             except Exception:
@@ -655,22 +723,17 @@ def validate_url_live(url: str, timeout: float = URL_VALIDATE_TIMEOUT) -> bool:
             ok = False
     except Exception:
         ok = False
-
     with _URL_VALIDATE_LOCK:
         _URL_VALIDATE_CACHE[url] = ok
     return ok
 
-
 def sanitize_document_links(results_list: list) -> dict:
-    """Gemini 응답의 모든 document_links URL을 검증, 가짜는 null로 만듦."""
     stats = {"checked": 0, "killed_format": 0, "killed_dead": 0, "passed": 0}
     urls_to_check: list[str] = []
-
     for r in results_list:
         for dl in r.get("document_links", []) or []:
             url = dl.get("url")
-            if url is None or url == "":
-                continue
+            if url is None or url == "": continue
             stats["checked"] += 1
             if not _looks_like_valid_url(url):
                 dl["url"] = None
@@ -679,12 +742,10 @@ def sanitize_document_links(results_list: list) -> dict:
                     dl["search_hint"] = f"{dl.get('source','')} 검색 후 공식 사이트 접속"
                 continue
             urls_to_check.append(url)
-
     unique = list(set(urls_to_check))
     if unique:
         with ThreadPoolExecutor(max_workers=URL_VALIDATE_WORKERS) as exe:
             list(exe.map(validate_url_live, unique))
-
     for r in results_list:
         for dl in r.get("document_links", []) or []:
             url = dl.get("url")
@@ -696,14 +757,145 @@ def sanitize_document_links(results_list: list) -> dict:
             elif url:
                 stats["passed"] += 1
                 dl["ai_verified"] = True
-
     print(f"🔒 URL 검증: {stats['checked']}건 중 통과 {stats['passed']} / 형식차단 {stats['killed_format']} / 사망 {stats['killed_dead']}")
     return stats
 
 
 # ══════════════════════════════════════════════════════════
-#  성능 지표
+#  [신규] 추천 정책 전부의 서류 발급처 배치 생성 (5개씩 묶음)
 # ══════════════════════════════════════════════════════════
+def llm_batch_document_links(policies: list) -> dict:
+    """추천된 정책들의 서류 발급처를 5개씩 묶어 생성 (묶음당 API 1번).
+    반환: {정책명: [document_links]}"""
+    result_map: dict = {}
+    if not policies:
+        return result_map
+
+    collected = []  # URL 검증용 (result_map과 같은 리스트 객체 공유)
+    chunk_size = 5
+
+    for chunk_start in range(0, len(policies), chunk_size):
+        chunk = policies[chunk_start:chunk_start + chunk_size]
+        policies_text = "\n\n".join([
+            f"[정책{chunk_start+i+1}] {p.get('name','')}\n"
+            f"  제출 서류: {str(p.get('submit_docs',''))[:300]}\n"
+            f"  정책 원문: {str(p.get('raw_text',''))[:200]}"
+            for i, p in enumerate(chunk)
+        ])
+        try:
+            llm = get_llm()
+            prompt = f"""아래 정책들의 '제출 서류'를 읽고, 각 정책마다 필요한 서류의 발급처와 공식 URL을 안내하세요.
+
+[규칙]
+- 100% 확신하는 공식 도메인만 url에 넣고, 의심되면 url=null
+- 참고 도메인: 정부24(https://www.gov.kr), 홈택스(https://www.hometax.go.kr),
+  국민건강보험(https://www.nhis.or.kr), 고용보험(https://www.ei.go.kr),
+  워크넷(https://www.work.go.kr), 복지로(https://www.bokjiro.go.kr)
+
+[정책 목록]
+{policies_text}
+
+JSON 형식으로만 응답 (마크다운 없이):
+{{
+  "results": [
+    {{
+      "index": {chunk_start+1},
+      "document_links": [
+        {{"doc_name": "서류명", "source": "발급기관명", "url": "공식 URL 또는 null", "search_hint": "url이 null일 때만 검색 안내", "fee": "수수료"}}
+      ]
+    }}
+  ]
+}}"""
+            response = llm.invoke([HumanMessage(content=prompt)])
+            data = json.loads(response.content.replace("```json", "").replace("```", "").strip())
+            for r in data.get("results", []):
+                idx = r.get("index", 0) - 1
+                if 0 <= idx < len(policies):
+                    name = policies[idx].get("name", "")
+                    links = r.get("document_links", []) or []
+                    result_map[name] = links
+                    collected.append({"document_links": links})
+            print(f"   📄 발급처 생성 {chunk_start+1}~{chunk_start+len(chunk)}번 완료")
+        except Exception as e:
+            print(f"   ⚠️ 발급처 생성 실패 ({chunk_start+1}~{chunk_start+len(chunk)}): {e}")
+
+    # URL 환각 차단 (실제 접속 확인) - collected가 result_map과 같은 리스트 객체라 같이 정리됨
+    try:
+        sanitize_document_links(collected)
+    except Exception as e:
+        print(f"⚠️ 발급처 URL 검증 오류: {e}")
+
+    return result_map
+
+
+# ══════════════════════════════════════════════════════════
+#  Gemini 최종 분석 (raw_text 기반 검증 + 부적합 제거)
+# ══════════════════════════════════════════════════════════
+def analyze_with_llm(user_info, eligible):
+    llm = get_llm()
+    policies_text = "\n\n".join([
+        f"[{i+1}] {p['name']} (적합도 {p['fit_score']}%)\n"
+        f"  분류: {p['lclsf']} > {p['category']} | 지원방식: {p['pvmthd']}\n"
+        f"  금액: {p['amount'] or '미상'}\n"
+        f"  지역: {p['region']} {p['sub_region']} | 직업조건: {p['job'][:30]}\n"
+        f"  소득조건: {p['earn_cnd'][:30]} | 출처: {p['source']}\n"
+        f"  조건 판단: {' / '.join(p['reasons'])}\n"
+        f"  정책 원문: {p.get('raw_text','')[:500]}\n"
+        f"  추가 자격: {p.get('add_qlfc','')[:200]}\n"
+        f"  제외 대상: {p.get('exclude_target','')[:200]}\n"
+        f"  제출 서류: {p.get('submit_docs','')[:300]}"
+        for i, p in enumerate(eligible[:5])
+    ])
+
+    prompt = f"""당신은 청년 복지 정책 전문가입니다.
+아래 각 정책의 '정책 원문', '추가 자격', '제외 대상'을 꼼꼼히 읽고
+사용자 정보와 대조하여 두 가지를 수행하세요:
+
+1. [검증] 각 정책이 이 사용자에게 실제로 적합한지 판단
+   - 정책 원문 전체를 읽고 숨어있는 조건까지 확인
+   - 제외 대상에 해당하면 is_valid = false
+   - 추가 자격 조건 미충족이면 is_valid = false
+   - 모든 조건 충족하면 is_valid = true
+
+2. [추천] is_valid = true인 정책만 우선순위 정해서 추천
+   - 지원 금액이 정책 원문에 있으면 반드시 amount에 포함
+   (※ 서류 발급처는 별도 단계에서 모든 추천 정책에 생성됩니다)
+
+[사용자 정보]
+- 나이: {user_info['age']}세
+- 거주지: {user_info['region']} {user_info.get('sub_region','')}
+- 취업상태: {user_info['employment']}
+- 소득: 중위소득 {user_info.get('income_pct',100)}%
+- 주거형태: {user_info.get('housing','')}
+- 학력: {user_info.get('education','')}
+- 관심분야: {', '.join(user_info.get('interests',[]))}
+
+[검증할 정책 목록]
+{policies_text}
+
+JSON 형식으로만 응답 (마크다운 없이):
+{{
+  "results": [
+    {{
+      "name": "정책명",
+      "priority": 1,
+      "fit_score": "적합도%",
+      "amount": "실제 지원금액",
+      "pvmthd": "지원방식",
+      "region": "대상 지역",
+      "is_valid": true
+    }}
+  ],
+  "top_recommendation": "1순위 정책명",
+  "total_monthly": "월 예상 수령액 합계",
+  "summary": "사용자에게 맞는 혜택 요약 2~3줄"
+}}"""
+
+    start = time.time()
+    response = llm.invoke([HumanMessage(content=prompt)])
+    return response.content, round(time.time()-start, 2)
+
+
 def calculate_diversity(results):
     if not results: return {"region":0,"source":0}
     n = len(results)
@@ -716,11 +908,13 @@ def print_performance(m):
     print(f"\n{'='*55}")
     print("📊 상세 성능 지표")
     print(f"{'='*55}")
-    print(f"\n  ⏱️  소요시간: RAG {m['search_time']}초 / LLM {m['llm_time']}초 / 전체 {m['total_time']}초")
-    print(f"  🔍 검색: {m['searched']}건/{m['total_db']}건 | 유사도 평균 {m['avg_similarity']}% 최고 {m['max_similarity']}%")
-    print(f"  ✅ 자격: {m['eligible']}건 충족 ({m['eligible_rate']}%) | 적합도 평균 {m['avg_fit']}% 최고 {m['max_fit']}%")
-    print(f"  🔄 중복: {m['conflicts']}건 충돌 → 최적 {m['optimal']}건")
-    print(f"  💰 추천: {m['top_policy']}")
+    print(f"  ⏱️  RAG {m['search_time']}초 / LLM {m['llm_time']}초 / 전체 {m['total_time']}초")
+    print(f"  🔍 {m['searched']}건/{m['total_db']}건 | 유사도 평균 {m['avg_similarity']}% 최고 {m['max_similarity']}%")
+    print(f"  ✅ {m['eligible']}건 충족 ({m['eligible_rate']}%) | 적합도 평균 {m['avg_fit']}% 최고 {m['max_fit']}%")
+    print(f"  🔄 충돌 {m['conflicts']}건 → 최적 {m['optimal']}건")
+    if m.get('portfolio'):
+        print(f"  💰 포트폴리오: {m['portfolio']['total_monthly_text']}")
+    print(f"  🏆 추천: {m['top_policy']}")
     print(f"{'='*55}\n")
 
 
@@ -755,32 +949,74 @@ def run_pipeline(user_info: dict) -> dict:
             if r["eligible"]:
                 all_eligible.append(r)
 
-    seen, unique = set(), []
-    # 1차: 적합도 높은 순 / 2차: 점수 같으면 AI 임베딩 유사도 높은 순
+    # ① 중복 제거 + 정렬 먼저 (LLM 검증 전에 → 같은 정책 중복 검증 방지)
+    seen, dedup = set(), []
     for r in sorted(all_eligible, key=lambda x: (-x["fit_score"], -x["similarity"])):
         if r["name"] not in seen:
             seen.add(r["name"])
-            unique.append(r)
+            dedup.append(r)
+
+    # ② 빈 필드 LLM 배치 보완 (중복 없는 것만, API 1번)
+    if dedup:
+        print(f"🧠 LLM 배치 필드 보완 중 ({len(dedup)}건)...")
+        dedup_full = [get_full_policy(r.get("id","")) for r in dedup]
+        dedup_full = llm_batch_fill_missing_fields(dedup_full)
+        for i, r in enumerate(dedup):
+            pid = r.get("id","")
+            if dedup_full[i]:
+                POLICY_DB[pid] = dedup_full[i]
+
+    # ③ LLM 제외 대상 배치 검증 (중복 없는 것만, 5개씩 묶어서)
+    print(f"🔍 LLM 배치 검증 중 ({len(dedup)}건 → 5개씩)...")
+    batch_results = llm_batch_check_exclude(dedup, user_info)
+    exclude_map = {
+        r["index"] - 1: r.get("reason", "사유 미상")
+        for r in batch_results
+        if r.get("excluded", False)
+    }
+
+    unique = []
+    for i, r in enumerate(dedup):
+        if i in exclude_map:
+            reason = exclude_map[i]
+            print(f"   🚫 LLM 제외: {r['name'][:30]} — {reason}")
+            r["eligible"] = False
+            r["reasons"].append(f"LLM 판단 ❌ ({reason})")
+            continue
+        unique.append(r)
 
     print(f"\n⚙️  자격 충족: {len(unique)}건")
     for r in unique[:10]:
         print(f"   ✅ [{r['fit_score']:6.2f}%] [{r['category']}] {r['name']} | {r['amount'] or '금액미상'} | {r['pvmthd']}")
 
     if not unique:
-        return {"results":[],"top_recommendation":"","total_monthly":"",
-                "summary":"조건에 맞는 정책이 없습니다.","eligible_policies":[],
-                "optimal_policies":[],"performance":{"total_time":round(time.time()-total_start,2)}}
+        return {
+            "results":[], "top_recommendation":"", "total_monthly":"",
+            "summary":"조건에 맞는 정책이 없습니다.", "eligible_policies":[],
+            "optimal_policies":[], "portfolio":{},
+            "performance":{"total_time":round(time.time()-total_start,2)}
+        }
 
     print("\n🔄 중복수혜 체크 중...")
     checked, optimal = print_conflict_report(unique)
 
-    print("🤖 Gemini 최종 분석 중...")
+    # 추천된 정책 "전부"의 서류 발급처를 5개씩 묶어 생성 → 각 정책에 부착
+    print(f"📄 서류 발급처 생성 중 ({len(checked)}건 → 5개씩 묶음)...")
+    doc_map = llm_batch_document_links(checked)
+    for p in checked:
+        p["document_links"] = doc_map.get(p.get("name", ""), [])
+
+    portfolio = calculate_optimal_portfolio(optimal)
+    print(f"💰 포트폴리오: {portfolio['total_monthly_text']}")
+
+    print("🤖 Gemini 최종 분석 + 검증 중...")
     fallback = {
         "results": [{"name":r["name"],"priority":i+1,"fit_score":f"{r['fit_score']}%",
                      "amount":r["amount"],"pvmthd":r["pvmthd"],"region":f"{r['region']} {r['sub_region']}",
-                     "reason":" / ".join(r["reasons"])} for i,r in enumerate(optimal[:5])],
+                     "is_valid": True, "document_links":[]} for i,r in enumerate(optimal[:5])],
         "top_recommendation": optimal[0]["name"] if optimal else "",
-        "total_monthly":"","summary":"AI 분석 일시 불가, 자체 매칭 결과입니다.",
+        "total_monthly": portfolio['total_monthly_text'],
+        "summary":"AI 분석 일시 불가, 자체 매칭 결과입니다.",
     }
     llm_result, llm_time = None, 0
     try:
@@ -788,13 +1024,20 @@ def run_pipeline(user_info: dict) -> dict:
         print(f"\n📋 최종 추천:\n{final_raw}")
         try:
             llm_result = json.loads(final_raw.replace("```json","").replace("```","").strip())
+            before = len(llm_result.get("results", []))
+            llm_result["results"] = [
+                r for r in llm_result.get("results", [])
+                if r.get("is_valid", True)
+            ]
+            after = len(llm_result.get("results", []))
+            if before != after:
+                print(f"   🚫 Gemini 검증으로 {before - after}건 추가 제거")
         except:
             llm_result = fallback
     except Exception as e:
         print(f"⚠️ Gemini 실패: {e}")
         llm_result = fallback
 
-    # URL 환각 차단 — Gemini가 생성한 모든 URL 실시간 검증
     try:
         results_for_check = llm_result.get("results", [])
         if results_for_check:
@@ -820,6 +1063,7 @@ def run_pipeline(user_info: dict) -> dict:
         "max_fit": round(max(fit_scores),1) if fit_scores else 0,
         "conflicts": conflicts_count, "optimal": len(optimal),
         "diversity": calculate_diversity(all_search),
+        "portfolio": portfolio,
         "top_policy": top_policy,
     }
     print_performance(perf)
@@ -827,10 +1071,11 @@ def run_pipeline(user_info: dict) -> dict:
     return {
         "results": llm_result.get("results",[]),
         "top_recommendation": llm_result.get("top_recommendation",""),
-        "total_monthly": llm_result.get("total_monthly",""),
+        "total_monthly": portfolio['total_monthly_text'],
         "summary": llm_result.get("summary",""),
         "eligible_policies": checked,
         "optimal_policies": optimal,
+        "portfolio": portfolio,
         "performance": perf,
     }
 
@@ -843,4 +1088,9 @@ if __name__ == "__main__":
         "interests": ["주거","금융"],
     }
     result = run_pipeline(user)
-    print(f"\n🔗 추천 {len(result['results'])}건 | 1순위: {result['top_recommendation']} | {result['performance']['total_time']}초")
+    print(f"\n🔗 추천 {len(result['results'])}건 | 1순위: {result['top_recommendation']}")
+    print(f"💰 포트폴리오: {result['portfolio']['total_monthly_text']}")
+    print(f"⏱️  {result['performance']['total_time']}초")
+
+    answer = chat_about_policy("1순위 정책 신청 방법이 뭐야?", result["optimal_policies"], user)
+    print(f"\n💬 챗봇: {answer}")

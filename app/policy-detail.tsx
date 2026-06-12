@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Linking, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { API_URL } from '../constants/api';
+import { supabase } from '../constants/supabase';
 
 interface PolicyFull {
   id: string;
@@ -501,6 +502,22 @@ export default function PolicyDetailScreen() {
 
   const handleFeedback = async (helpful: boolean) => {
     setFeedbackDone(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user && policy) {
+        await fetch(`${API_URL}/feedback`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_id: user.id,
+            policy_name: policy.name,
+            is_helpful: helpful,
+          }),
+        });
+      }
+    } catch (e) {
+      console.error('피드백 전송 실패', e);
+    }
     setTimeout(() => { setShowFeedback(false); setFeedbackDone(false); }, 1200);
   };
 
