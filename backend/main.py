@@ -5,7 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import asyncio
 from contextlib import asynccontextmanager
 from uuid import UUID
-from fastapi import Depends, FastAPI, HTTPException, File, UploadFile, Form
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import Column, Text, Integer, DateTime, Boolean
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
@@ -16,7 +16,6 @@ from models import UserProfile
 from schemas import InterestInput, UserInput
 from rag.rag_pipeline import run_pipeline, policies as ALL_POLICIES, refresh_data_and_rebuild
 from pydantic import BaseModel
-import fitz
 
 REFRESH_INTERVAL_SEC = 30 * 60
 
@@ -74,41 +73,12 @@ class FeedbackInput(BaseModel):
     policy_name: str
     is_helpful: bool
 
-class ChatInput(BaseModel):
-    message: str
-    user_id: str
-    pdf_context: str = ""
-
 def get_db():
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
-
-def get_user_info_str(user_id: str, db: Session) -> str:
-    try:
-        user_uuid = UUID(user_id)
-        profile = db.query(UserProfile).filter(UserProfile.id == user_uuid).first()
-        if profile:
-            interests = profile.interests.split(",") if profile.interests else []
-            interest_map = {
-                'housing': '주거', 'finance': '금융', 'job': '일자리',
-                'edu': '교육', 'startup': '창업',
-            }
-            interests_korean = [interest_map.get(i.strip(), i.strip()) for i in interests]
-            return f"""
-사용자 정보:
-- 나이: {profile.age}세
-- 지역: {profile.city} {profile.district}
-- 소득: {profile.income}
-- 취업상태: {profile.job_status}
-- 학력: {profile.education}
-- 관심분야: {', '.join(interests_korean)}
-"""
-    except:
-        pass
-    return ""
 
 @app.get("/")
 def root():
@@ -342,168 +312,6 @@ def get_feedback_stats(db: Session = Depends(get_db)):
             "helpful_percent": percent,
         })
     return sorted(result, key=lambda x: -x["helpful_percent"])
-
-@app.post("/welfare/chat")
-async def chat(data: ChatInput, db: Session = Depends(get_db)):
-    try:
-        print(f"💬 챗봇 요청: {data.message[:30]}")
-        user_info = get_user_info_str(data.user_id, db)
-
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        from langchain_core.messages import HumanMessage
-
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=os.getenv("GEMINI_API_KEY"),
-            max_retries=0,
-        )
-
-        # ChromaDB에서 관련 정책 검색
-        from rag.rag_pipeline import vectorstore, get_full_policy
-        policy_context = ""
-        try:
-            scored = vectorstore.similarity_search_with_score(data.message, k=5)
-            for doc, score in scored:
-                similarity = round(max(0.0, 1 - score) * 100, 1)
-                if similarity < 40:
-                    continue
-                pid = doc.metadata.get("id", "")
-                full = get_full_policy(pid)
-                policy_context += f"""
-[{doc.metadata.get('name','')}] (유사도 {similarity}%)
-- 지원금액: {doc.metadata.get('amount','정보없음')}
-- 지역: {doc.metadata.get('region','')} {doc.metadata.get('sub_region','')}
-- 마감: {doc.metadata.get('deadline','정보없음')}
-- 정책 내용: {str(full.get('raw_text',''))[:400]}
-- 추가 자격: {str(full.get('add_qlfc',''))[:200]}
-- 제외 대상: {str(full.get('exclude_target',''))[:200]}
-- 신청 방법: {str(full.get('apply_method',''))[:200]}
-"""
-            print(f"🔍 챗봇 ChromaDB 검색: {len(scored)}건")
-        except Exception as e:
-            print(f"⚠️ ChromaDB 검색 실패: {e}")
-
-        # PDF 컨텍스트
-        pdf_section = ""
-        if data.pdf_context:
-            pdf_section = f"""
-[업로드된 PDF 내용]
-{data.pdf_context}
-위 PDF 내용을 참고하여 답변해주세요.
-"""
-
-        prompt = f"""당신은 청년 복지 정책 전문 AI 상담사입니다.
-
-[중요 규칙 - 반드시 준수]
-1. 반드시 아래 [관련 정책 데이터]에 있는 내용만 답변하세요
-2. 아래 [관련 정책 데이터]가 비어있거나 질문과 관련없는 경우
-   반드시 이 형식으로만 답변하세요:
-
-"죄송해요, 해당 질문은 제가 답변드리기 어렵습니다 😢
-저는 청년 복지 정책 추천과 안내만 도와드릴 수 있어요.
-
-아래와 같이 질문해주시면 도움드릴 수 있어요!
-- '주거 지원 정책 추천해줘'
-- '청년 취업 관련 혜택 알려줘'
-- '월세 지원 신청 방법이 뭐야?'"
-
-3. 소득 기준/중위소득 계산/나이 기준 등
-   일반 복지 상식 질문도 위 형식으로 답변하세요
-4. 데이터에 없는 내용은 절대 추측하지 마세요
-
-{user_info}
-{pdf_section}
-
-[관련 정책 데이터]
-{policy_context if policy_context else "관련 정책 데이터 없음"}
-
-사용자 질문: {data.message}
-
-[답변 형식 - 관련 데이터 있을 때만]
-- 줄글 금지! 항목별로 나눠서 답변
-- 이모지 적절히 사용
-
-📌 정책명
-- 지원 대상:
-- 지원 금액:
-- 신청 방법:
-- 신청 기간:
-
-💡 추가 안내
-- 문의: 정책 담당 기관"""
-
-        response = llm.invoke([HumanMessage(content=prompt)])
-        return {"reply": response.content}
-
-    except Exception as e:
-        print(f"❌ 챗봇 최종 에러: {type(e).__name__}: {e}")
-        if "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e):
-            return {"reply": "현재 AI 서비스 이용량이 초과되었어요 😢\n잠시 후 다시 시도해주세요!"}
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/welfare/chat/pdf")
-async def chat_pdf(
-    file: UploadFile = File(...),
-    user_id: str = Form(default=""),
-    db: Session = Depends(get_db)
-):
-    try:
-        contents = await file.read()
-        doc = fitz.open(stream=contents, filetype="pdf")
-        text = ""
-        for page in doc:
-            text += page.get_text()
-        doc.close()
-
-        if not text.strip():
-            raise HTTPException(status_code=400, detail="PDF에서 텍스트를 추출할 수 없습니다.")
-
-        user_info = get_user_info_str(user_id, db)
-
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        from langchain_core.messages import HumanMessage
-
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            google_api_key=os.getenv("GEMINI_API_KEY"),
-            max_retries=0,
-        )
-
-        prompt = f"""당신은 청년 복지 정책 전문 AI 상담사입니다.
-아래 PDF 내용을 분석하고 다음 형식으로 정리해주세요.
-
-{user_info}
-
-[PDF 내용]
-{text[:3000]}
-
-[답변 형식]
-📄 문서 요약
-- 문서 종류:
-- 주요 내용:
-
-📌 관련 정책/혜택
-- 정책명:
-- 지원 금액:
-- 신청 방법:
-
-✅ 이 사용자에게 도움이 되는 정보
--
-
-❓ 추가로 궁금한 점이 있으면 질문해주세요!"""
-
-        response = llm.invoke([HumanMessage(content=prompt)])
-
-        return {
-            "reply": response.content,
-            "pdf_text": text[:2000],
-        }
-
-    except Exception as e:
-        print(f"❌ PDF 처리 에러: {type(e).__name__}: {e}")
-        if "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e):
-            return {"reply": "현재 AI 서비스 이용량이 초과되었어요 😢\n잠시 후 다시 시도해주세요!", "pdf_text": ""}
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/result")
 def get_result():

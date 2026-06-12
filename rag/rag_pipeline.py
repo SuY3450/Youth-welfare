@@ -1,7 +1,7 @@
 """
 청년 복지 정책 RAG 파이프라인 v4+v5 통합
 """
-import os, time, json, re
+import os, time, json, re, traceback
 import urllib.request
 import urllib.error
 import threading
@@ -22,6 +22,7 @@ def get_llm():
         google_api_key=os.getenv("GEMINI_API_KEY"),
         max_retries=2,
     )
+
 
 SIGUNGU_MAP = {
     "서울특별시": [
@@ -211,20 +212,36 @@ JSON 형식으로만 응답 (마크다운 없이):
 # ══════════════════════════════════════════════════════════
 #  [v5] LLM 제외 대상 배치 판단 (5개씩 묶어서)
 # ══════════════════════════════════════════════════════════
-def llm_batch_check_exclude(policies: list, user_info: dict) -> list:
-    """5개씩 묶어서 검증 - 토큰 안전 + API 최소화"""
+def llm_batch_check_exclude(policies: list, user_info: dict) -> tuple:
+    """5개씩 묶어서 검증 - 토큰 안전 + API 최소화
+    반환: (all_results, verify_stats)
+      verify_stats = {
+        "total_chunks": 전체 묶음 수,
+        "ok_chunks": 검증 성공 묶음 수,
+        "verified_indices": 실제 LLM 검증을 거친 정책 인덱스 집합,
+        "last_error": 마지막으로 발생한 에러 메시지(없으면 ""),
+      }
+    """
     if not policies:
-        return []
+        return [], {"total_chunks": 0, "ok_chunks": 0, "verified_indices": set(), "last_error": ""}
 
     all_results = []
     chunk_size = 5
+    total_chunks = (len(policies) + chunk_size - 1) // chunk_size
+    ok_chunks = 0
+    verified_indices = set()
+    last_error = ""
 
     for chunk_start in range(0, len(policies), chunk_size):
         chunk = policies[chunk_start:chunk_start + chunk_size]
 
         policies_text = "\n\n".join([
             f"[정책{chunk_start+i+1}] {p['name']}\n"
-            f"  정책 원문: {str(p.get('raw_text',''))[:300]}\n"
+            f"  분류: {p.get('lclsf','')} > {p.get('category','')} | 지원방식: {p.get('pvmthd','')}\n"
+            f"  지역: {p.get('region','')} {p.get('sub_region','')} | 직업조건: {str(p.get('job',''))[:30]}\n"
+            f"  소득조건: {str(p.get('earn_cnd',''))[:30]}\n"
+            f"  조건 판단(알고리즘): {' / '.join(p.get('reasons', []))}\n"
+            f"  정책 원문: {str(p.get('raw_text',''))[:500]}\n"
             f"  제외 대상: {str(p.get('exclude_target',''))[:200]}\n"
             f"  추가 자격: {str(p.get('add_qlfc',''))[:200]}"
             for i, p in enumerate(chunk)
@@ -232,7 +249,9 @@ def llm_batch_check_exclude(policies: list, user_info: dict) -> list:
 
         try:
             llm = get_llm()
-            prompt = f"""아래 정책들을 읽고 이 사용자가 각 정책에 신청 가능한지 판단하세요.
+            prompt = f"""아래 정책들은 알고리즘이 1차로 적합하다고 걸러낸 후보입니다.
+각 정책의 '정책 원문'을 직접 읽고, 이 사용자가 실제로 신청 가능한지 최종 검증하세요.
+('조건 판단(알고리즘)'은 참고용 사전 판단이며, 원문과 대조해 옳은지 다시 확인하세요.)
 
 [사용자 정보]
 - 나이: {user_info['age']}세
@@ -245,11 +264,24 @@ def llm_batch_check_exclude(policies: list, user_info: dict) -> list:
 [검증할 정책 목록]
 {policies_text}
 
-각 정책마다:
+[중요] 우리 앱은 사용자에게서 '나이, 거주지(지역), 소득수준, 취업상태, 학력'만 받습니다.
+부적격 판단은 반드시 이 5개 항목으로만 하세요. 그 외 조건은 우리가 정보를 모릅니다.
+
+각 정책마다 판단하세요:
 - 정책 원문에 숨어있는 조건까지 확인
-- 제외 대상에 해당하면 excluded = true
-- 추가 자격 조건 미충족이면 excluded = true
-- 모든 조건 충족하면 excluded = false
+
+- ⛔ 아래처럼 위 5개 항목 중 하나가 '명백히 어긋날 때만' excluded = true:
+  · 사용자 나이가 정책 대상 연령 범위를 벗어남
+  · 사용자 거주지가 정책 지역과 다름
+  · 소득수준·취업상태·학력 조건에 명백히 부적합
+  · '제외 대상'에 사용자가 분명히 해당함
+
+- ✅ 위 5개 항목으로 '확인할 수 없는' 조건은 절대 제외 사유로 쓰지 마세요 → excluded = false:
+  · 창업 여부, 1인가구 여부, 무주택 여부, 임차계약 예정 여부, 주거형태 등
+    사용자 정보에 없는 조건은 '미충족'이 아니라 '확인 필요'로 처리
+  · 이 경우 reason에 "확인 필요: ○○ 조건"이라고 명시
+
+- 모든 조건을 충족하면 excluded = false
 
 JSON 형식으로만 응답 (마크다운 없이):
 {{
@@ -260,12 +292,24 @@ JSON 형식으로만 응답 (마크다운 없이):
 }}"""
             response = llm.invoke([HumanMessage(content=prompt)])
             result = json.loads(response.content.replace("```json","").replace("```","").strip())
-            all_results.extend(result.get("results", []))
+            chunk_results = result.get("results", [])
+            all_results.extend(chunk_results)
+            for r in chunk_results:
+                verified_indices.add(r.get("index", 0) - 1)
+            ok_chunks += 1
             print(f"   🔍 배치 검증 {chunk_start+1}~{chunk_start+len(chunk)}번 완료")
         except Exception as e:
-            print(f"   ⚠️ 배치 검증 실패 ({chunk_start+1}~{chunk_start+len(chunk)}): {e}")
+            # 검증 실패 시 해당 묶음 정책들은 'verified_indices'에 안 들어감 → 미검증으로 추적됨
+            last_error = str(e)
+            print(f"   ⚠️ 배치 검증 실패 ({chunk_start+1}~{chunk_start+len(chunk)}): {e}", flush=True)
 
-    return all_results
+    verify_stats = {
+        "total_chunks": total_chunks,
+        "ok_chunks": ok_chunks,
+        "verified_indices": verified_indices,
+        "last_error": last_error,
+    }
+    return all_results, verify_stats
 
 
 # ══════════════════════════════════════════════════════════
@@ -302,52 +346,6 @@ def calculate_optimal_portfolio(policies: list) -> dict:
         "monthly_policies": monthly_policies,
         "onetime_policies": onetime_policies,
     }
-
-
-# ══════════════════════════════════════════════════════════
-#  [v5] AI 챗봇 상담
-# ══════════════════════════════════════════════════════════
-def chat_about_policy(user_question: str, recommended_policies: list, user_info: dict = None) -> str:
-    context = "\n\n".join([
-        f"[{p['name']}]\n"
-        f"지원방식: {p.get('pvmthd','')}\n"
-        f"금액: {p.get('amount','')}\n"
-        f"지역: {p.get('region','')} {p.get('sub_region','')}\n"
-        f"정책 내용: {p.get('raw_text','')[:400]}\n"
-        f"추가 자격: {p.get('add_qlfc','')[:200]}\n"
-        f"제외 대상: {p.get('exclude_target','')[:200]}\n"
-        f"신청 방법: {p.get('apply_method','')[:200]}"
-        for p in recommended_policies[:3]
-    ])
-
-    user_context = ""
-    if user_info:
-        user_context = f"""
-[사용자 정보]
-- {user_info.get('age','')}세 / {user_info.get('region','')} {user_info.get('sub_region','')}
-- 취업: {user_info.get('employment','')} / 소득: 중위 {user_info.get('income_pct',100)}%
-- 주거: {user_info.get('housing','')} / 학력: {user_info.get('education','')}
-"""
-
-    prompt = f"""당신은 청년 복지 정책 전문 상담사입니다.
-아래 추천된 정책 정보를 바탕으로 사용자 질문에 친절하고 정확하게 답변하세요.
-
-정책 원문에 없는 내용은 추측하지 말고 "해당 정보는 정책 원문에 명시되어 있지 않습니다. 관할 기관에 문의해주세요." 라고 답하세요.
-{user_context}
-[추천된 정책 정보]
-{context}
-
-[사용자 질문]
-{user_question}
-
-답변:"""
-
-    try:
-        llm = get_llm()
-        response = llm.invoke([HumanMessage(content=prompt)])
-        return response.content
-    except Exception as e:
-        return f"죄송합니다, 일시적으로 답변을 생성할 수 없습니다. ({e})"
 
 
 # ══════════════════════════════════════════════════════════
@@ -848,17 +846,14 @@ def analyze_with_llm(user_info, eligible):
     ])
 
     prompt = f"""당신은 청년 복지 정책 전문가입니다.
-아래 각 정책의 '정책 원문', '추가 자격', '제외 대상'을 꼼꼼히 읽고
-사용자 정보와 대조하여 두 가지를 수행하세요:
+아래 정책들은 이미 적합성 검증을 통과해 이 사용자에게 신청 가능한 정책들입니다.
+(부적격 정책은 앞 단계에서 모두 걸러졌으니, 다시 적합/부적격을 판단하지 마세요.)
 
-1. [검증] 각 정책이 이 사용자에게 실제로 적합한지 판단
-   - 정책 원문 전체를 읽고 숨어있는 조건까지 확인
-   - 제외 대상에 해당하면 is_valid = false
-   - 추가 자격 조건 미충족이면 is_valid = false
-   - 모든 조건 충족하면 is_valid = true
-
-2. [추천] is_valid = true인 정책만 우선순위 정해서 추천
+당신의 역할은 '추천 순위 정리와 요약'입니다:
+   - 사용자에게 도움이 되는 순서로 우선순위(priority)를 매기세요
+   - 1순위 정책(top_recommendation)을 선정하세요
    - 지원 금액이 정책 원문에 있으면 반드시 amount에 포함
+   - 사용자에게 맞는 혜택을 2~3줄로 요약(summary)하세요
    (※ 서류 발급처는 별도 단계에서 모든 추천 정책에 생성됩니다)
 
 [사용자 정보]
@@ -870,7 +865,7 @@ def analyze_with_llm(user_info, eligible):
 - 학력: {user_info.get('education','')}
 - 관심분야: {', '.join(user_info.get('interests',[]))}
 
-[검증할 정책 목록]
+[추천할 정책 목록]
 {policies_text}
 
 JSON 형식으로만 응답 (마크다운 없이):
@@ -882,8 +877,7 @@ JSON 형식으로만 응답 (마크다운 없이):
       "fit_score": "적합도%",
       "amount": "실제 지원금액",
       "pvmthd": "지원방식",
-      "region": "대상 지역",
-      "is_valid": true
+      "region": "대상 지역"
     }}
   ],
   "top_recommendation": "1순위 정책명",
@@ -968,26 +962,59 @@ def run_pipeline(user_info: dict) -> dict:
 
     # ③ LLM 제외 대상 배치 검증 (중복 없는 것만, 5개씩 묶어서)
     print(f"🔍 LLM 배치 검증 중 ({len(dedup)}건 → 5개씩)...")
-    batch_results = llm_batch_check_exclude(dedup, user_info)
+    batch_results, verify_stats = llm_batch_check_exclude(dedup, user_info)
     exclude_map = {
         r["index"] - 1: r.get("reason", "사유 미상")
         for r in batch_results
         if r.get("excluded", False)
     }
+    verified_indices = verify_stats["verified_indices"]
 
     unique = []
+    excluded_count, verified_count, unverified_count = 0, 0, 0
     for i, r in enumerate(dedup):
         if i in exclude_map:
             reason = exclude_map[i]
             print(f"   🚫 LLM 제외: {r['name'][:30]} — {reason}")
             r["eligible"] = False
+            r["llm_verified"] = True
             r["reasons"].append(f"LLM 판단 ❌ ({reason})")
+            excluded_count += 1
             continue
+        if i in verified_indices:
+            r["llm_verified"] = True
+            verified_count += 1
+        else:
+            # LLM이 이 정책을 검증하지 못함 (API 실패/한도초과 등) → 미검증 통과
+            r["llm_verified"] = False
+            r["reasons"].append("⚠️ LLM 미검증 (API 실패로 검증 건너뜀)")
+            unverified_count += 1
         unique.append(r)
 
-    print(f"\n⚙️  자격 충족: {len(unique)}건")
+    # ── 검증 상태 요약 로그 (검증 '됨' vs '건너뜀'을 명확히 구분) ──
+    ok_chunks = verify_stats["ok_chunks"]
+    total_chunks = verify_stats["total_chunks"]
+    last_error = verify_stats.get("last_error", "")
+    print(f"\n{'─'*55}")
+    if ok_chunks == 0 and total_chunks > 0:
+        print(f"🛑 LLM 검증 전부 실패! ({total_chunks}묶음 0건 성공) → 검증 안 됨")
+        print(f"   ⚠️  아래 {len(unique)}건은 '검증되지 않은' 결과입니다 (API 한도/오류 확인 필요)")
+        if last_error:
+            print(f"   ▶ 에러 원인: {last_error}")
+    elif unverified_count > 0:
+        print(f"⚠️  LLM 검증 일부만 완료: {ok_chunks}/{total_chunks}묶음 성공")
+        print(f"   ✅ 검증됨 {verified_count}건 / 🚫 제외 {excluded_count}건 / ⚠️ 미검증 {unverified_count}건")
+        if last_error:
+            print(f"   ▶ 에러 원인: {last_error}")
+    else:
+        print(f"✅ LLM 검증 완료: {ok_chunks}/{total_chunks}묶음 성공")
+        print(f"   ✅ 검증 통과 {verified_count}건 / 🚫 제외 {excluded_count}건")
+    print(f"{'─'*55}")
+
+    print(f"\n⚙️  자격 충족: {len(unique)}건 (검증됨 {verified_count} / 미검증 {unverified_count})")
     for r in unique[:10]:
-        print(f"   ✅ [{r['fit_score']:6.2f}%] [{r['category']}] {r['name']} | {r['amount'] or '금액미상'} | {r['pvmthd']}")
+        mark = "✅" if r.get("llm_verified") else "❓"
+        print(f"   {mark} [{r['fit_score']:6.2f}%] [{r['category']}] {r['name']} | {r['amount'] or '금액미상'} | {r['pvmthd']}")
 
     if not unique:
         return {
@@ -1009,11 +1036,11 @@ def run_pipeline(user_info: dict) -> dict:
     portfolio = calculate_optimal_portfolio(optimal)
     print(f"💰 포트폴리오: {portfolio['total_monthly_text']}")
 
-    print("🤖 Gemini 최종 분석 + 검증 중...")
+    print("🤖 Gemini 추천 순위 정리 + 요약 중...")
     fallback = {
         "results": [{"name":r["name"],"priority":i+1,"fit_score":f"{r['fit_score']}%",
                      "amount":r["amount"],"pvmthd":r["pvmthd"],"region":f"{r['region']} {r['sub_region']}",
-                     "is_valid": True, "document_links":[]} for i,r in enumerate(optimal[:5])],
+                     "document_links":[]} for i,r in enumerate(optimal[:5])],
         "top_recommendation": optimal[0]["name"] if optimal else "",
         "total_monthly": portfolio['total_monthly_text'],
         "summary":"AI 분석 일시 불가, 자체 매칭 결과입니다.",
@@ -1024,18 +1051,10 @@ def run_pipeline(user_info: dict) -> dict:
         print(f"\n📋 최종 추천:\n{final_raw}")
         try:
             llm_result = json.loads(final_raw.replace("```json","").replace("```","").strip())
-            before = len(llm_result.get("results", []))
-            llm_result["results"] = [
-                r for r in llm_result.get("results", [])
-                if r.get("is_valid", True)
-            ]
-            after = len(llm_result.get("results", []))
-            if before != after:
-                print(f"   🚫 Gemini 검증으로 {before - after}건 추가 제거")
         except:
             llm_result = fallback
     except Exception as e:
-        print(f"⚠️ Gemini 실패: {e}")
+        print(f"⚠️ Gemini 최종 분석 실패: {e}")
         llm_result = fallback
 
     try:
@@ -1091,6 +1110,3 @@ if __name__ == "__main__":
     print(f"\n🔗 추천 {len(result['results'])}건 | 1순위: {result['top_recommendation']}")
     print(f"💰 포트폴리오: {result['portfolio']['total_monthly_text']}")
     print(f"⏱️  {result['performance']['total_time']}초")
-
-    answer = chat_about_policy("1순위 정책 신청 방법이 뭐야?", result["optimal_policies"], user)
-    print(f"\n💬 챗봇: {answer}")
