@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import BottomTabBar from '../components/BottomTabBar';
 import { API_URL } from '../constants/api';
 import { supabase } from '../constants/supabase';
 
@@ -187,17 +188,7 @@ export default function MyPageScreen() {
 
         <View style={{ height: 20 }} />
       </ScrollView>
-
-      <View style={styles.bottomTab}>
-        <TouchableOpacity style={styles.tabItem} onPress={() => router.push('/')}>
-          <Ionicons name="home-outline" size={24} color="#999" />
-          <Text style={styles.tabText}>홈</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem}>
-          <Ionicons name="person-circle" size={24} color="#67B292" />
-          <Text style={[styles.tabText, { color: '#67B292' }]}>마이</Text>
-        </TouchableOpacity>
-      </View>
+      <BottomTabBar />
     </SafeAreaView>
   );
 }

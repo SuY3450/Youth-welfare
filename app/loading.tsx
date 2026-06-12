@@ -34,16 +34,35 @@ export default function LoadingScreen() {
       setTimeout(() => setSteps(s => s.map((item, i) => i === 3 ? { ...item, completed: true } : item)), 2400),
     ];
 
-    // RAG API 호출
     const fetchResult = async () => {
       try {
+        console.log('RAG 요청 시작:', `${API_URL}/welfare/analyze?profile_id=${profile_id}`);
         const response = await fetch(`${API_URL}/welfare/analyze?profile_id=${profile_id}`, {
           method: 'POST',
         });
-        const data = await response.json();
-        router.push({ pathname: '/result', params: { resultData: JSON.stringify(data) } });
+
+        console.log('RAG 응답 상태:', response.status);
+
+        // JSON 파싱 전에 텍스트로 먼저 받기
+        const text = await response.text();
+        console.log('RAG 응답 내용:', text.substring(0, 300));
+
+        if (!response.ok) {
+          console.error('RAG 서버 오류:', response.status, text.substring(0, 200));
+          router.push('/result');
+          return;
+        }
+
+        try {
+          const data = JSON.parse(text);
+          router.push({ pathname: '/result', params: { resultData: JSON.stringify(data) } });
+        } catch (parseError) {
+          console.error('JSON 파싱 오류:', parseError, '응답:', text.substring(0, 200));
+          router.push('/result');
+        }
+
       } catch (error) {
-        console.error('RAG 오류:', error);
+        console.error('RAG 네트워크 오류:', error);
         router.push('/result');
       }
     };
