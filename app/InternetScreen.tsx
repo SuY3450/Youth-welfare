@@ -1,0 +1,142 @@
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useState } from 'react';
+import { Alert, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { API_URL } from '../constants/api';
+import { supabase } from '../constants/supabase';
+
+interface InterestItem {
+  id: string;
+  label: string;
+  emoji: string;
+}
+
+const interestData: InterestItem[] = [
+  { id: 'housing', label: '주거', emoji: '🏠' },
+  { id: 'finance', label: '금융', emoji: '💰' },
+  { id: 'job', label: '취업', emoji: '💼' },
+  { id: 'edu', label: '교육', emoji: '📚' },
+  { id: 'startup', label: '창업', emoji: '🚀' },
+];
+
+export default function InternetScreen() {
+  const router = useRouter();
+  const { profile_id } = useLocalSearchParams<{ profile_id?: string }>();
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  const toggleInterest = (id: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+    );
+  };
+
+  const handleStartMatching = async () => {
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError || !session) {
+      Alert.alert('로그인 필요', '다시 로그인해주세요.');
+      router.replace('/login/login1');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/interest`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          profile_id,
+          interests: selectedIds,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        Alert.alert('저장 실패', errorData.detail || '서버 오류가 발생했습니다.');
+        return;
+      }
+
+      router.push({ pathname: '/loading', params: { profile_id } });
+    } catch (error) {
+      console.error('오류:', error);
+      Alert.alert('네트워크 오류', '백엔드 서버에 연결할 수 없습니다.');
+    }
+  };
+
+  const selectedLabels = interestData
+    .filter((item) => selectedIds.includes(item.id))
+    .map((item) => item.label)
+    .join(', ');
+
+  const canSubmit = selectedIds.length > 0;
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>관심 분야</Text>
+          <Text style={styles.stepText}>2 / 2</Text>
+        </View>
+        <View style={styles.progressBarBg}><View style={styles.progressBarFill} /></View>
+
+        <Text style={styles.subTitle}>받고 싶은 지원 분야를 선택해주세요 (복수 선택 가능)</Text>
+
+        <View style={styles.grid}>
+          {interestData.map((item) => {
+            const isSelected = selectedIds.includes(item.id);
+            return (
+              <TouchableOpacity
+                key={item.id}
+                style={[styles.card, isSelected && styles.activeCard]}
+                onPress={() => toggleInterest(item.id)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.emoji}>{item.emoji}</Text>
+                <Text style={[styles.cardLabel, isSelected && styles.activeCardLabel]}>{item.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </ScrollView>
+
+      <View style={styles.bottomFixedArea}>
+        <View style={styles.summaryBox}>
+          <Text style={styles.summaryText}>
+            📌 선택한 분야: {selectedLabels || '없음'}
+          </Text>
+        </View>
+
+        <TouchableOpacity
+          style={[styles.nextButton, !canSubmit && styles.nextButtonDisabled]}
+          onPress={handleStartMatching}
+          disabled={!canSubmit}
+        >
+          <Text style={styles.nextButtonText}>AI 매칭 시작 →</Text>
+        </TouchableOpacity>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#F7FDFB' },
+  scrollContent: { padding: 25, paddingTop: 40, paddingBottom: 20 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 },
+  headerTitle: { fontSize: 26, fontWeight: '800', color: '#111' },
+  stepText: { fontSize: 16, color: '#999', fontWeight: '600' },
+  progressBarBg: { height: 5, backgroundColor: '#E0E0E0', borderRadius: 10, marginBottom: 20 },
+  progressBarFill: { width: '100%', height: '100%', backgroundColor: '#67B292', borderRadius: 10 },
+  subTitle: { fontSize: 15, color: '#666', marginBottom: 30, fontWeight: '500' },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
+  card: { width: '48%', backgroundColor: '#FFF', aspectRatio: 1, borderRadius: 20, borderWidth: 1, borderColor: '#EEE', justifyContent: 'center', alignItems: 'center', marginBottom: 15, elevation: 2 },
+  activeCard: { backgroundColor: '#E8F5EF', borderColor: '#00B894', borderWidth: 2 },
+  emoji: { fontSize: 32, marginBottom: 10 },
+  cardLabel: { fontSize: 16, fontWeight: '700', color: '#333' },
+  activeCardLabel: { color: '#00B894' },
+  bottomFixedArea: { paddingHorizontal: 25, paddingBottom: 30, backgroundColor: '#F7FDFB' },
+  summaryBox: { backgroundColor: '#EBF7F0', padding: 18, borderRadius: 15, marginBottom: 20, flexDirection: 'row', alignItems: 'center' },
+  summaryText: { color: '#00B894', fontSize: 15, fontWeight: '700' },
+  nextButton: { backgroundColor: '#00B894', paddingVertical: 18, borderRadius: 35, alignItems: 'center' },
+  nextButtonDisabled: { backgroundColor: '#A8E6C9' },
+  nextButtonText: { color: '#FFF', fontSize: 18, fontWeight: '800' },
+});

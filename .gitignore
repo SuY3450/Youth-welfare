@@ -1,3 +1,61 @@
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env*.local
+.env
+
+# typescript
+*.tsbuildinfo
+
+app-example
+
+# generated native folders
+/ios
+/android
+
+# ngrok
+constants/api.ts
+constants/api.js
+
+.venv
+__pycache__
+*.pyc
+
+# ChromaDB (백엔드 시작 시 clean_final.json에서 자동 재생성)
+chroma_db/
+backend/chroma_db/
+
+constants/supabase.ts
 venv/
 chroma_db/
 backfill_category.py
