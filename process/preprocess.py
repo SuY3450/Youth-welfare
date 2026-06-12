@@ -1,14 +1,44 @@
 import json
 import hashlib
 import os
-import re  # 추가
+import re
 
-RAW_PATH   = "data/raw/승현_온통청년.json"
-CLEAN_PATH = "data/clean/clean_final.json"
+# 여러 raw 소스를 함께 전처리 (온통청년 + 서울청년몽땅 자치구)
+RAW_PATHS = [
+    "data/raw/승현_온통청년.json",
+    "data/raw/seoulyouth.json",
+    "data/raw/gyeonggi.json",        # ← 추가
+]
+
+
+CLEAN_PATH = "data/clean/clean_final.json"   # 누적 저장본
+NEW_PATH   = "data/clean/new_policies.json"  # 이번에 새로 추가된 것만 (ChromaDB upsert용)
+
 
 def make_id(policy: dict) -> str:
     key = f"{policy['source']}_{policy['name']}"
     return hashlib.md5(key.encode()).hexdigest()[:12]
+
+
+def name_key(item: dict):
+    """공고명 + 자치구 기준 중복 식별 (연도·공백만 제거, '구'는 유지해 강남/강서 구분)"""
+    n = re.sub(r"\s+", "", re.sub(r"\d{4}", "", item.get("name", "")))
+    return (n, item.get("sub_region", ""))
+
+
+def load_raw() -> list:
+    """RAW_PATHS의 모든 파일을 읽어 하나의 리스트로 합침"""
+    raw = []
+    for path in RAW_PATHS:
+        if not os.path.exists(path):
+            print(f"⚠️  없음, 건너뜀: {path}")
+            continue
+        with open(path, encoding="utf-8") as f:
+            items = json.load(f)
+        print(f"  · {path}: {len(items)}건")
+        raw.extend(items)
+    return raw
+
 
 def make_embedding_text(p: dict) -> str:
     parts = [
@@ -43,7 +73,7 @@ def make_embedding_text(p: dict) -> str:
     return " | ".join(part for part in parts if part).strip()
 
 # ──────────────────────────────────────────
-# 추가: 4개 필드 추출 함수
+# 4개 필드 추출 함수 (원본 그대로)
 # ──────────────────────────────────────────
 def extract_employment(p: dict) -> str:
     job = p.get("job", "")
@@ -105,13 +135,25 @@ def extract_housing(p: dict) -> str:
     if re.search(r'자가|자기\s*소유|주택\s*소유', text): results.add("자가")
     return "" if not results else ", ".join(sorted(results))
 
+def infer_category(p: dict) -> str:
+    """category(중분류)가 비어있는 소스(자치구·경기 등)를 lclsf + 본문으로 추정"""
+    lclsf = p.get("lclsf", "")
+    text  = f"{p.get('name','')} {p.get('raw_text','')} {p.get('job','')}"
+    if "일자리" in lclsf:
+        return "창업" if re.search(r'창업|스타트업|예비\s*창업|창업가|멘토링|창업지원|스타트업', text) else "취업"
+    if "주거" in lclsf:
+        return "주거"
+    if "금융" in lclsf:                       # 자치구 '금융복지'
+        return "금융" if re.search(r'대출|융자|이자|금리|보증|예금|적금|통장|자산형성|저축', text) else "복지"
+    if "교육" in lclsf or "문화" in lclsf:     # 자치구 '교육문화'
+        return "문화" if re.search(r'문화|예술|공연|전시|체육|여가', text) else "교육"
+    return ""
+
 # ──────────────────────────────────────────
 
 def preprocess():
-    with open(RAW_PATH, encoding="utf-8") as f:
-        raw = json.load(f)
-
-    print(f"전처리 시작: {len(raw)}건")
+    raw = load_raw()
+    print(f"전처리 시작: 총 {len(raw)}건")
 
     results = []
     seen_ids = set()
@@ -126,7 +168,7 @@ def preprocess():
             "id":              pid,
             "name":            p.get("name", ""),
             "lclsf":           p.get("lclsf", ""),
-            "category":        p.get("category", ""),
+            "category":        p.get("category") or infer_category(p),
             "region":          p.get("region", ""),
             "sub_region":      p.get("sub_region", ""),
             "source":          p.get("source", ""),
@@ -156,19 +198,46 @@ def preprocess():
             "select_method":   p.get("select_method", ""),
             "submit_docs":     p.get("submit_docs", ""),
             "embedding_text":  make_embedding_text(p),
-            # 4개 필드 — 빈값 대신 바로 추출
             "benefit_type":    extract_benefit_type(p),
             "income_max_pct":  extract_income_max_pct(p),
             "housing":         extract_housing(p),
             "employment":      extract_employment(p),
         })
 
+    # ── 기존 clean_final 에 신규만 병합 (id + 공고명+자치구 중복 차단) ──
     os.makedirs("data/clean", exist_ok=True)
-    with open(CLEAN_PATH, "w", encoding="utf-8") as f:
-        json.dump(results, f, ensure_ascii=False, indent=2)
 
-    print(f"전처리 완료: {len(results)}건 → {CLEAN_PATH}")
-    return results
+    if os.path.exists(CLEAN_PATH):
+        with open(CLEAN_PATH, encoding="utf-8") as f:
+            existing = json.load(f)
+    else:
+        existing = []
+
+    existing_ids   = {e["id"] for e in existing}
+    existing_names = {name_key(e) for e in existing}
+
+    new_items = []
+    for r in results:
+        if r["id"] in existing_ids:
+            continue
+        if name_key(r) in existing_names:
+            continue
+        existing_ids.add(r["id"])
+        existing_names.add(name_key(r))
+        new_items.append(r)
+
+    merged = existing + new_items
+
+    with open(CLEAN_PATH, "w", encoding="utf-8") as f:
+        json.dump(merged, f, ensure_ascii=False, indent=2)
+    with open(NEW_PATH, "w", encoding="utf-8") as f:
+        json.dump(new_items, f, ensure_ascii=False, indent=2)
+
+    print(f"전처리 완료: 신규 {len(new_items)}건 추가 → 전체 {len(merged)}건")
+    print(f"   → {CLEAN_PATH}")
+    print(f"   → {NEW_PATH} (신규만, ChromaDB upsert용)")
+    return new_items
+
 
 if __name__ == "__main__":
     preprocess()

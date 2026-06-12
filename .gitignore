@@ -56,3 +56,6 @@ chroma_db/
 backend/chroma_db/
 
 constants/supabase.ts
+venv/
+chroma_db/
+backfill_category.py
