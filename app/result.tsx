@@ -3,6 +3,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import BottomTabBar from '../components/BottomTabBar';
 import { supabase } from '../constants/supabase';
 
 interface Policy {
@@ -48,20 +49,18 @@ const parseDeadlineDate = (deadline: string) => {
   return all.length > 0 ? all[all.length - 1] : null;
 };
 
-// 중복수혜 경고문구를 줄글로 정리 (번호·기호 제거)
 const cleanConflictText = (text?: string) => {
   if (!text) return '다른 지원사업과 중복 수혜가 제한될 수 있어요.';
   let t = text
-    .replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, '')        // 원문자 번호 제거
-    .replace(/[➀➁➂➃➄]/g, '')                  // 특수 번호 제거
-    .replace(/[○●◦▶■□❍ㅇ]/g, '')              // 글머리 기호 제거
-    .replace(/\s*[-–]\s*/g, ', ')               // 하이픈 → 쉼표
-    .replace(/[\n\r]+/g, ' ')                    // 줄바꿈 → 공백
-    .replace(/\s{2,}/g, ' ')                     // 연속 공백 정리
-    .replace(/,\s*,/g, ',')                      // 중복 쉼표 정리
-    .replace(/^[,\s]+|[,\s]+$/g, '')             // 앞뒤 쉼표·공백 제거
+    .replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, '')
+    .replace(/[➀➁➂➃➄]/g, '')
+    .replace(/[○●◦▶■□❍ㅇ]/g, '')
+    .replace(/\s*[-–]\s*/g, ', ')
+    .replace(/[\n\r]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/,\s*,/g, ',')
+    .replace(/^[,\s]+|[,\s]+$/g, '')
     .trim();
-  // 끝에 마침표 없으면 추가
   if (t && !/[.。]$/.test(t)) t += '.';
   return t;
 };
@@ -94,7 +93,6 @@ interface LlmResult {
   priority: number;
   fit_score: string;
   amount: string;
-  reason: string;
   document_links?: DocumentLink[];
 }
 
@@ -145,15 +143,12 @@ export default function ResultScreen() {
   }
 
   const policies = data.eligible_policies || [];
-  const llmReasons = new Map<string, string>();
   const llmDocLinks = new Map<string, DocumentLink[]>();
   (data.results || []).forEach((r) => {
-    if (r.name && r.reason) llmReasons.set(r.name, r.reason);
     if (r.name && r.document_links?.length) llmDocLinks.set(r.name, r.document_links);
   });
 
   const goToDetail = (policy: Policy, rank: number) => {
-    // 추천 정책 전부에 발급처가 부착돼 있으면 그걸 우선 사용, 없으면 기존 results 맵 사용
     const docLinks = (policy.document_links && policy.document_links.length > 0)
       ? policy.document_links
       : llmDocLinks.get(policy.name);
@@ -194,7 +189,6 @@ export default function ResultScreen() {
 
         {policies.map((item, index) => {
           const rank = index + 1;
-          const friendlyReason = llmReasons.get(item.name);
           const deadline = formatDeadline(item.deadline);
           return (
             <TouchableOpacity
@@ -257,16 +251,6 @@ export default function ResultScreen() {
                 <Text style={styles.amountText}>{item.amount || '금액 정보 없음'}</Text>
               </View>
 
-              {friendlyReason ? (
-                <View style={styles.reasonBox}>
-                  <View style={styles.reasonBoxHeader}>
-                    <Ionicons name="bulb" size={13} color="#00A582" />
-                    <Text style={styles.reasonBoxTitle}>추천 이유</Text>
-                  </View>
-                  <Text style={styles.reasonBoxText}>{friendlyReason}</Text>
-                </View>
-              ) : null}
-
               {item.conflict_warning ? (
                 <View style={styles.conflictBox}>
                   <View style={styles.conflictBoxHeader}>
@@ -279,7 +263,6 @@ export default function ResultScreen() {
                 </View>
               ) : null}
 
-
               <View style={styles.detailHint}>
                 <Text style={styles.detailHintText}>자세히 보기</Text>
                 <Ionicons name="chevron-forward" size={14} color="#00C49A" />
@@ -288,17 +271,7 @@ export default function ResultScreen() {
           );
         })}
       </ScrollView>
-
-      <View style={styles.bottomTab}>
-        <TouchableOpacity style={styles.tabItem}>
-          <Ionicons name="home" size={24} color="#67B292" />
-          <Text style={[styles.tabText, { color: '#67B292' }]}>홈</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem} onPress={() => router.push('/mypage')}>
-          <Ionicons name="person-circle" size={24} color="#999" />
-          <Text style={[styles.tabText, { color: '#999' }]}>마이</Text>
-        </TouchableOpacity>
-      </View>
+      <BottomTabBar />
     </SafeAreaView>
   );
 }
@@ -358,17 +331,10 @@ const styles = StyleSheet.create({
   tagGrayText: { color: '#666', fontSize: 12, fontWeight: '600' },
   amountBox: { backgroundColor: '#f0faf5', borderRadius: 10, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 10 },
   amountText: { color: '#00C49A', fontWeight: '800', fontSize: 18 },
-  reasonBox: { backgroundColor: '#F0FBF7', borderLeftWidth: 3, borderLeftColor: '#00C49A', borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, marginTop: 4, marginBottom: 10 },
   conflictBox: { backgroundColor: '#FFFBEB', borderLeftWidth: 3, borderLeftColor: '#F59E0B', borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, marginTop: 4, marginBottom: 10 },
   conflictBoxHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 4, gap: 4 },
   conflictBoxTitle: { fontSize: 12, fontWeight: '700', color: '#B45309' },
   conflictBoxText: { fontSize: 12, color: '#92400E', lineHeight: 18 },
-  reasonBoxHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
-  reasonBoxTitle: { fontSize: 12, fontWeight: '700', color: '#00A582', marginLeft: 4, letterSpacing: 0.2 },
-  reasonBoxText: { fontSize: 13.5, color: '#333', lineHeight: 21 },
   detailHint: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', marginTop: 4 },
   detailHintText: { color: '#00C49A', fontSize: 13, fontWeight: '700', marginRight: 2 },
-  bottomTab: { flexDirection: 'row', height: 80, backgroundColor: '#FFF', borderTopWidth: 1, borderTopColor: '#EEE', paddingBottom: 20 },
-  tabItem: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  tabText: { fontSize: 12, marginTop: 4, color: '#999', fontWeight: '600' },
 });

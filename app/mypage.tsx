@@ -228,8 +228,5 @@ const styles = StyleSheet.create({
   settingDesc: { fontSize: 12, color: '#888' },
   divider: { height: 1, backgroundColor: '#f0f0f0', marginVertical: 12 },
   logoutButton: { backgroundColor: '#fff', borderRadius: 16, paddingVertical: 18, alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
-  logoutText: { color: '#FF4444', fontSize: 16, fontWeight: 'bold' },
-  bottomTab: { flexDirection: 'row', height: 80, backgroundColor: '#FFF', borderTopWidth: 1, borderTopColor: '#EEE', paddingBottom: 20 },
-  tabItem: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  tabText: { fontSize: 12, marginTop: 4, color: '#999', fontWeight: '600' },
+  logoutText: { color: '#FF4444', fontSize: 16, fontWeight: 'bold' }
 });

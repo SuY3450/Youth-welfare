@@ -20,7 +20,7 @@ def get_llm():
     return ChatGoogleGenerativeAI(
         model="gemini-2.5-flash",
         google_api_key=os.getenv("GEMINI_API_KEY"),
-        max_retries=2,
+        max_retries=0,
     )
 
 SIGUNGU_MAP = {
