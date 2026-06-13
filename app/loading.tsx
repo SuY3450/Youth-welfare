@@ -34,15 +34,21 @@ export default function LoadingScreen() {
       setTimeout(() => setSteps(s => s.map((item, i) => i === 3 ? { ...item, completed: true } : item)), 2400),
     ];
 
-    // RAG API 호출
+    // RAG API 호출 (타임아웃 10분)
     const fetchResult = async () => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 600000); // 10분
+
       try {
         const response = await fetch(`${API_URL}/welfare/analyze?profile_id=${profile_id}`, {
           method: 'POST',
+          signal: controller.signal,
         });
+        clearTimeout(timeoutId);
         const data = await response.json();
         router.push({ pathname: '/result', params: { resultData: JSON.stringify(data) } });
       } catch (error) {
+        clearTimeout(timeoutId);
         console.error('RAG 오류:', error);
         router.push('/result');
       }

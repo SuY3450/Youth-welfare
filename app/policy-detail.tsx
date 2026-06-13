@@ -131,32 +131,19 @@ const parseSections = (rawText?: string): Record<SectionKey, string> => {
 
 const cleanRawText = (text?: string) => {
   if (!text) return '';
-
   let t = text
-    // ── 1. 불필요한 꼬리 문구 + 선정방법 이하 제거 ──
     .replace(/관심 정책정보 목록.*$/s, '')
     .replace(/유관기관 사이트.*$/s, '')
     .replace(/본 정보는 제공기관의[^.]*\./g, '')
     .replace(/※\s*본 페이지[^。\n]*/g, '')
     .replace(/\(출처[^)]*\)/g, '')
-    // 선정방법 키워드 이후 텍스트 제거 (별도 섹션에서 보여주므로 중복 방지)
-    // ㅇ (선정방법), ○ 선정방법, □ 선정기준 등 앞의 기호·괄호까지 같이 제거
     .replace(/\n[^\n]*[\(（]?\s*(선정\s*방법|선발\s*방법|선정\s*기준|심사\s*기준)[\s\S]*$/i, '')
-
-
-    // ── 3. 꺾쇠 섹션 제목 <...> → 줄바꿈 추가 ──
     .replace(/<([^>]{1,30})>/g, '\n■ $1\n')
-
-    // ── 4. 섹션 기호 앞에 줄바꿈 삽입 ──
     .replace(/([^\n])(□|■|▶|◆|◇|▣|◎)/g, '$1\n$2')
     .replace(/([^\n])(ㅇ\s)/g, '$1\n$2')
     .replace(/([^\n])(❍\s)/g, '$1\n$2')
-
-    // ── 5. 들여쓰기 공백 정리 (줄 앞 공백 2칸 이상 → 그냥 제거) ──
     .replace(/\n {2,}/g, '\n')
     .replace(/\n\t+/g, '\n')
-
-    // ── 6. 특수 기호 통일 ──
     .replace(/❍/g, 'ㅇ')
     .replace(/➀/g, '①')
     .replace(/➁/g, '②')
@@ -164,24 +151,18 @@ const cleanRawText = (text?: string) => {
     .replace(/▸/g, '·')
     .replace(/‧/g, '·')
     .replace(/‑/g, '-')
-    .replace(/‧/g, '·')  // 특수 점 문자
-
-    // ── 7. 연속 빈줄 정리 ──
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-
-  // ── 8. 줄 단위 중복 제거 (이미 나온 줄이 다시 나오면 그 줄만 제거) ──
   const seen = new Set<string>();
   t = t.split('\n').filter(line => {
     const key = line.trim();
-    if (key === '') return true; // 빈 줄은 유지
-    if (key.length < 10) return true; // 짧은 줄(기호 등)은 중복 체크 제외
-    if (seen.has(key)) return false; // 이미 나온 줄 → 제거
+    if (key === '') return true;
+    if (key.length < 10) return true;
+    if (seen.has(key)) return false;
     seen.add(key);
     return true;
   }).join('\n');
-
   return t;
 };
 
@@ -196,62 +177,31 @@ const cleanPeriodText = (text: string) => {
     .trim();
 };
 
-// ──────────────────────────────────────────
-// 정책 내용 텍스트 렌더러 (줄바꿈·불릿 처리)
-// ──────────────────────────────────────────
 const HEADER_SYMBOLS = /^[□■○●▶◆◇▣◎▪▫ㅇ\-―•·❍]+\s*/;
 const INLINE_SYMBOLS = /^[□■○●▶◆◇▣◎▪▫·•ㅇ❍\-―]\s*/;
 
 const isSubHeader = (line: string) => {
   const trimmed = line.trim();
-  // 콜론/특수 끝문자로 끝나는 짧은 줄
-  if (
-    (trimmed.endsWith(':') || trimmed.endsWith('：') || trimmed.endsWith('】') || trimmed.endsWith('▶')) &&
-    trimmed.length <= 40
-  ) return true;
-  // □■▶◆【■ 으로 시작하는 줄
+  if ((trimmed.endsWith(':') || trimmed.endsWith('：') || trimmed.endsWith('】') || trimmed.endsWith('▶')) && trimmed.length <= 40) return true;
   if (/^[□■▶◆【]/.test(trimmed)) return true;
-  // ㅇ (목적), ㅇ (대상) 등 — ㅇ + 공백 + 괄호 패턴
   if (/^ㅇ\s*[\(（]/.test(trimmed)) return true;
-  // <...> 꺾쇠 제목으로 변환된 것 (■ 로 시작)
   if (/^■\s/.test(trimmed) && trimmed.length <= 40) return true;
   return false;
 };
 
 const RichText = ({ text }: { text: string }) => {
-  const lines = text
-    .replace(/\n{3,}/g, '\n\n')
-    .split('\n')
-    .map((l) => l.trim());
-
+  const lines = text.replace(/\n{3,}/g, '\n\n').split('\n').map((l) => l.trim());
   const elements: React.ReactElement[] = [];
   let key = 0;
-
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
-
-    // 빈 줄 → 여백
-    if (raw === '') {
-      elements.push(<View key={key++} style={{ height: 8 }} />);
-      continue;
-    }
-
+    if (raw === '') { elements.push(<View key={key++} style={{ height: 8 }} />); continue; }
     const clean = raw.replace(HEADER_SYMBOLS, '').trim();
-
     if (isSubHeader(raw)) {
-      // 첫 번째 소제목이 아닐 때만 위에 여백 추가
-      if (elements.length > 0) {
-        elements.push(<View key={key++} style={{ height: 12 }} />);
-      }
-      elements.push(
-        <Text key={key++} style={richStyles.subHeader}>
-          {clean.replace(/[:：]$/, '')}
-        </Text>
-      );
-      // 소제목 아래 여백
+      if (elements.length > 0) elements.push(<View key={key++} style={{ height: 12 }} />);
+      elements.push(<Text key={key++} style={richStyles.subHeader}>{clean.replace(/[:：]$/, '')}</Text>);
       elements.push(<View key={key++} style={{ height: 4 }} />);
     } else {
-      // 일반 내용 → 불릿
       const content = raw.replace(INLINE_SYMBOLS, '').trim();
       elements.push(
         <View key={key++} style={richStyles.bulletRow}>
@@ -261,35 +211,14 @@ const RichText = ({ text }: { text: string }) => {
       );
     }
   }
-
   return <View>{elements}</View>;
 };
 
 const richStyles = {
-  subHeader: {
-    fontSize: 14,
-    fontWeight: '400' as const,
-    color: '#111',
-    marginTop: 0,
-    marginBottom: 0,
-  },
-  bulletRow: {
-    flexDirection: 'row' as const,
-    alignItems: 'flex-start' as const,
-    marginBottom: 5,
-  },
-  bullet: {
-    fontSize: 14,
-    color: '#00C49A',
-    marginRight: 4,
-    lineHeight: 22,
-  },
-  bulletText: {
-    flex: 1,
-    fontSize: 14,
-    color: '#333',
-    lineHeight: 22,
-  },
+  subHeader: { fontSize: 14, fontWeight: '400' as const, color: '#111', marginTop: 0, marginBottom: 0 },
+  bulletRow: { flexDirection: 'row' as const, alignItems: 'flex-start' as const, marginBottom: 5 },
+  bullet: { fontSize: 14, color: '#00C49A', marginRight: 4, lineHeight: 22 },
+  bulletText: { flex: 1, fontSize: 14, color: '#333', lineHeight: 22 },
 };
 
 const parseReason = (reason: string) => {
@@ -508,16 +437,10 @@ export default function PolicyDetailScreen() {
         await fetch(`${API_URL}/feedback`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            user_id: user.id,
-            policy_name: policy.name,
-            is_helpful: helpful,
-          }),
+          body: JSON.stringify({ user_id: user.id, policy_name: policy.name, is_helpful: helpful }),
         });
       }
-    } catch (e) {
-      console.error('피드백 전송 실패', e);
-    }
+    } catch (e) { console.error('피드백 전송 실패', e); }
     setTimeout(() => { setShowFeedback(false); setFeedbackDone(false); }, 1200);
   };
 
@@ -589,7 +512,6 @@ export default function PolicyDetailScreen() {
 
       <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 48 }} showsVerticalScrollIndicator={false}>
 
-        {/* 헤더 섹션 */}
         <View style={styles.heroSection}>
           <View style={styles.heroTop}>
             {rank && Number(rank) <= 3 ? <View style={styles.rankBadge}><Text style={styles.rankText}>{rank}순위</Text></View> : null}
@@ -626,7 +548,6 @@ export default function PolicyDetailScreen() {
           </View>
         </View>
 
-        {/* 지원 금액 카드 */}
         <View style={styles.amountCard}>
           <View style={styles.amountLeft}>
             <Text style={styles.amountLabel}>💰 지원 금액</Text>
@@ -634,7 +555,6 @@ export default function PolicyDetailScreen() {
           </View>
         </View>
 
-        {/* 모집 일정 */}
         {(deadline || policy.registered_at || sections.period) ? (
           <View style={styles.section}>
             <View style={styles.sectionTitleRow}>
@@ -669,7 +589,6 @@ export default function PolicyDetailScreen() {
           </View>
         ) : null}
 
-        {/* 지원 대상 */}
         <View style={styles.section}>
           <View style={styles.sectionTitleRow}>
             <View style={styles.sectionDot} />
@@ -706,7 +625,6 @@ export default function PolicyDetailScreen() {
           ) : null}
         </View>
 
-        {/* 정책 내용 */}
         {(sections.content || policy.raw_text) ? (
           <View style={styles.section}>
             <View style={styles.sectionTitleRow}>
@@ -719,7 +637,6 @@ export default function PolicyDetailScreen() {
           </View>
         ) : null}
 
-        {/* 신청 방법 */}
         {sections.method ? (
           <View style={styles.section}>
             <View style={styles.sectionTitleRow}>
@@ -732,7 +649,6 @@ export default function PolicyDetailScreen() {
           </View>
         ) : null}
 
-        {/* 선정 방법 */}
         {(policy.select_method || sections.selectMethod) ? (
           <View style={styles.section}>
             <View style={styles.sectionTitleRow}>
@@ -745,7 +661,6 @@ export default function PolicyDetailScreen() {
           </View>
         ) : null}
 
-        {/* 필요 서류 */}
         {(() => {
           const rawDocsText = sections.documents || policy.submit_docs || '';
           const parsed = parseDocItems(rawDocsText);
@@ -769,12 +684,13 @@ export default function PolicyDetailScreen() {
                   {docs.map((doc, idx) => (
                     <View key={idx} style={[styles.docItemRow, idx === docs.length - 1 && { borderBottomWidth: 0 }]}>
                       <View style={styles.docItemTextWrap}>
-                        {(doc.required || doc.ifNeeded || (doc.origin === 'ai' && doc.url)) ? (
+                        {/* ✅ 핵심 수정: doc.url 있으면 무조건 AI 추천 뱃지 표시 */}
+                        {(doc.required || doc.ifNeeded || doc.url) ? (
                           <View style={styles.docBadgeRow}>
                             {doc.required === 'required' ? <View style={styles.requiredBadge}><Text style={styles.requiredBadgeText}>필수</Text></View> : null}
                             {doc.ifNeeded ? <View style={styles.ifNeededBadge}><Text style={styles.ifNeededBadgeText}>필요시</Text></View> : null}
                             {doc.required === 'optional' ? <View style={styles.optionalBadge}><Text style={styles.optionalBadgeText}>선택</Text></View> : null}
-                            {doc.origin === 'ai' && doc.url ? (
+                            {doc.url ? (
                               <View style={styles.aiBadge}>
                                 <Ionicons name="sparkles" size={10} color="#7B3FE4" />
                                 <Text style={styles.aiBadgeText}>AI 추천</Text>
@@ -783,7 +699,7 @@ export default function PolicyDetailScreen() {
                           </View>
                         ) : null}
                         <Text style={styles.docItemName}>{doc.name}</Text>
-                        <Text style={styles.docItemSource}>{doc.source}{doc.fee ? ` · ${doc.fee}` : ''}</Text>
+                        <Text style={styles.docItemSource}>{doc.source}</Text>
                         {doc.hint ? <Text style={styles.docItemHint}>{doc.hint}</Text> : null}
                       </View>
                       {doc.url ? (
@@ -806,7 +722,6 @@ export default function PolicyDetailScreen() {
           );
         })()}
 
-        {/* 문의처 */}
         {sections.contact ? (
           <View style={styles.section}>
             <View style={styles.sectionTitleRow}>
@@ -819,7 +734,6 @@ export default function PolicyDetailScreen() {
           </View>
         ) : null}
 
-        {/* 내 정보 매칭 결과 */}
         {reasonItems.length > 0 ? (
           <View style={styles.section}>
             <View style={styles.sectionTitleRow}>
@@ -850,7 +764,6 @@ export default function PolicyDetailScreen() {
         ) : null}
       </ScrollView>
 
-      {/* 피드백 모달 */}
       <Modal visible={showFeedback} transparent animationType="fade" onRequestClose={() => {}}>
         <View style={styles.feedbackOverlay}>
           <View style={styles.feedbackCard}>

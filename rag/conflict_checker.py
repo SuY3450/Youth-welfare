@@ -64,6 +64,14 @@ def extract_conflict_info(raw_text: str, exclude_target: str = "") -> dict:
         if match:
             start = max(0, match.start() - 30)
             end = min(len(combined), match.end() + 50)
+            # 단어·괄호 중간에서 잘리지 않도록 공백/문장부호 경계까지 확장
+            boundary = " \n\r\t.。!?"
+            start_limit = max(0, start - 40)
+            while start > start_limit and combined[start - 1] not in boundary:
+                start -= 1
+            end_limit = min(len(combined), end + 40)
+            while end < end_limit and combined[end] not in boundary:
+                end += 1
             context = combined[start:end].strip()
 
             conflict_type = ""
