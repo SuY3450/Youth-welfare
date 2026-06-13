@@ -1,20 +1,19 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { API_URL } from '../constants/api';
 import { supabase } from '../constants/supabase';
-
+ 
 export default function MyPageScreen() {
   const router = useRouter();
-  const [alarmEnabled, setAlarmEnabled] = useState(true);
   const [profile, setProfile] = useState(null);
   const [ragResult, setRagResult] = useState(null);
   const [email, setEmail] = useState('');
   const [userName, setUserName] = useState('');
   const [loading, setLoading] = useState(true);
-
+ 
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -25,13 +24,13 @@ export default function MyPageScreen() {
           if (name && typeof name === 'string' && name.trim()) {
             setUserName(name.trim());
           }
-
+ 
           const profileRes = await fetch(`${API_URL}/profile/${user.id}`);
           if (profileRes.ok) {
             const profileData = await profileRes.json();
             setProfile(profileData);
           }
-
+ 
           const ragRes = await fetch(`${API_URL}/rag-result/${user.id}`);
           if (ragRes.ok) {
             const ragData = await ragRes.json();
@@ -46,12 +45,12 @@ export default function MyPageScreen() {
     };
     fetchData();
   }, []);
-
+ 
   const handleLogout = async () => {
     await supabase.auth.signOut();
     router.push('/login/login1');
   };
-
+ 
   const getInterests = () => {
     const interest_map = {
       'housing': '주거',
@@ -70,7 +69,7 @@ export default function MyPageScreen() {
     }
     return [];
   };
-
+ 
   if (loading) {
     return (
       <SafeAreaView style={styles.wrap}>
@@ -78,13 +77,13 @@ export default function MyPageScreen() {
       </SafeAreaView>
     );
   }
-
+ 
   return (
     <SafeAreaView style={styles.wrap} edges={['top']}>
       <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-
+ 
         <Text style={styles.pageTitle}>마이페이지</Text>
-
+ 
         <View style={styles.profileCard}>
           <View style={styles.profileTop}>
             <View style={styles.avatar}>
@@ -100,7 +99,7 @@ export default function MyPageScreen() {
               </Text>
             </View>
           </View>
-
+ 
           <View style={styles.tagRow}>
             {profile && (
               <>
@@ -110,12 +109,12 @@ export default function MyPageScreen() {
               </>
             )}
           </View>
-
+ 
           <TouchableOpacity style={styles.editButton} onPress={() => router.push('/input')}>
             <Text style={styles.editButtonText}>프로필 수정하기</Text>
           </TouchableOpacity>
         </View>
-
+ 
         <View style={styles.statsCard}>
           <View style={styles.statItem}>
             <Text style={styles.statNumber}>{ragResult ? ragResult.eligible_count : '-'}</Text>
@@ -129,7 +128,7 @@ export default function MyPageScreen() {
             <Text style={styles.statLabel}>신청 가능</Text>
           </View>
         </View>
-
+ 
         <View style={styles.sectionCard}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>관심 분야</Text>
@@ -149,45 +148,14 @@ export default function MyPageScreen() {
             )}
           </View>
         </View>
-
-        <View style={styles.sectionCard}>
-          <View style={styles.settingItem}>
-            <View style={styles.settingLeft}>
-              <Text style={styles.settingIcon}>🔔</Text>
-              <View>
-                <Text style={styles.settingTitle}>알림 설정</Text>
-                <Text style={styles.settingDesc}>마감 알림, 새 정책 알림</Text>
-              </View>
-            </View>
-            <Switch
-              value={alarmEnabled}
-              onValueChange={setAlarmEnabled}
-              trackColor={{ false: '#ddd', true: '#00C49A' }}
-              thumbColor={'#fff'}
-            />
-          </View>
-
-          <View style={styles.divider} />
-
-          <TouchableOpacity style={styles.settingItem}>
-            <View style={styles.settingLeft}>
-              <Text style={styles.settingIcon}>📄</Text>
-              <View>
-                <Text style={styles.settingTitle}>내 서류 보관함</Text>
-                <Text style={styles.settingDesc}>업로드한 서류 관리</Text>
-              </View>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color="#aaa" />
-          </TouchableOpacity>
-        </View>
-
+ 
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
           <Text style={styles.logoutText}>로그아웃</Text>
         </TouchableOpacity>
-
+ 
         <View style={{ height: 20 }} />
       </ScrollView>
-
+ 
       <View style={styles.bottomTab}>
         <TouchableOpacity style={styles.tabItem} onPress={() => router.push('/')}>
           <Ionicons name="home-outline" size={24} color="#999" />
@@ -201,7 +169,7 @@ export default function MyPageScreen() {
     </SafeAreaView>
   );
 }
-
+ 
 const styles = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: '#F7FDFB' },
   container: { flex: 1, paddingHorizontal: 20 },
@@ -230,12 +198,6 @@ const styles = StyleSheet.create({
   interestRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
   interestTag: { backgroundColor: '#f0faf5', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
   interestText: { color: '#333', fontSize: 14 },
-  settingItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 6 },
-  settingLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  settingIcon: { fontSize: 24 },
-  settingTitle: { fontSize: 15, fontWeight: '600', color: '#111', marginBottom: 2 },
-  settingDesc: { fontSize: 12, color: '#888' },
-  divider: { height: 1, backgroundColor: '#f0f0f0', marginVertical: 12 },
   logoutButton: { backgroundColor: '#fff', borderRadius: 16, paddingVertical: 18, alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
   logoutText: { color: '#FF4444', fontSize: 16, fontWeight: 'bold' },
   bottomTab: { flexDirection: 'row', height: 80, backgroundColor: '#FFF', borderTopWidth: 1, borderTopColor: '#EEE', paddingBottom: 20 },
