@@ -102,6 +102,18 @@ def is_policy_expired(policy: dict) -> bool:
     if not deadline or deadline == "상시":
         return False
 
+    # "20260330 ~ 20260529" 형식 (8자리 숫자 yyyymmdd)
+    compact_dates = re.findall(r'\b(\d{4})(\d{2})(\d{2})\b', deadline)
+    if compact_dates:
+        dates = []
+        for y, m, d in compact_dates:
+            try:
+                dates.append(datetime(int(y), int(m), int(d)).date())
+            except Exception:
+                pass
+        if dates:
+            return max(dates) < datetime.now().date()
+
     # 기간(범위) 형식 대응: "2026. 6.3.~ 6. 17." 처럼 시작~종료 형식이면
     # "가장 늦은 날(종료일)" 기준으로 만료 판단 (시작일이 지났다고 만료 처리하지 않음)
     dated = re.findall(r'(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})', deadline)
