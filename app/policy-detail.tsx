@@ -420,9 +420,12 @@ export default function PolicyDetailScreen() {
   useEffect(() => {
     const checkViewCount = async () => {
       try {
-        const count = await AsyncStorage.getItem('policy_view_count');
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;                       // 로그인 상태에서만 카운트
+        const key = `policy_view_count_${user.id}`; // user별 카운트 키
+        const count = await AsyncStorage.getItem(key);
         const newCount = count ? parseInt(count) + 1 : 1;
-        await AsyncStorage.setItem('policy_view_count', String(newCount));
+        await AsyncStorage.setItem(key, String(newCount));
         if (newCount % 5 === 0) setTimeout(() => setShowFeedback(true), 1000);
       } catch (e) { console.error(e); }
     };

@@ -21,6 +21,7 @@ interface Policy {
   reasons: string[];
   conflict_warning?: string;
   conflict_text_raw?: string;
+  conflict_reason?: string;
   document_links?: DocumentLink[];
 }
 
@@ -50,7 +51,7 @@ const parseDeadlineDate = (deadline: string) => {
 
 // 중복수혜 경고문구를 줄글로 정리 (번호·기호 제거)
 const cleanConflictText = (text?: string) => {
-  if (!text) return '다른 지원사업과 중복 수혜가 제한될 수 있어요.';
+  if (!text) return '';   // 근거 텍스트가 없으면 문구를 지어내지 않는다 (박스 자체를 숨김)
   let t = text
     .replace(/[①②③④⑤⑥⑦⑧⑨⑩]/g, '')        // 원문자 번호 제거
     .replace(/[➀➁➂➃➄]/g, '')                  // 특수 번호 제거
@@ -267,14 +268,14 @@ export default function ResultScreen() {
                 </View>
               ) : null}
 
-              {item.conflict_warning ? (
+              {item.conflict_warning && (item.conflict_reason || cleanConflictText(item.conflict_text_raw)) ? (
                 <View style={styles.conflictBox}>
                   <View style={styles.conflictBoxHeader}>
                     <Ionicons name="warning-outline" size={13} color="#B45309" />
                     <Text style={styles.conflictBoxTitle}>중복수혜 주의</Text>
                   </View>
                   <Text style={styles.conflictBoxText}>
-                    {cleanConflictText(item.conflict_text_raw)}
+                    {item.conflict_reason || cleanConflictText(item.conflict_text_raw)}
                   </Text>
                 </View>
               ) : null}

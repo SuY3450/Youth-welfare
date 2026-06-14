@@ -12,7 +12,9 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.messages import HumanMessage
-from .conflict_checker import check_conflicts, get_optimal_combination, print_conflict_report
+from .conflict_checker import (
+    check_conflicts, get_optimal_combination, print_conflict_report, extract_conflict_info,
+)
 
 load_dotenv()
 
@@ -20,8 +22,35 @@ def get_llm():
     return ChatGoogleGenerativeAI(
         model="gemini-2.5-flash",
         google_api_key=os.getenv("GEMINI_API_KEY"),
-        max_retries=2,
+        max_retries=0,   # 재시도는 invoke_with_backoff가 전담 (중복 방지)
     )
+
+
+# 503(과부하)·429(한도) 등 일시 오류 표식
+_TRANSIENT_MARKERS = (
+    "503", "UNAVAILABLE", "overload", "high demand",
+    "429", "RESOURCE_EXHAUSTED", "ResourceExhausted",
+    "ServiceUnavailable", "DeadlineExceeded", "504",
+)
+
+def invoke_with_backoff(llm, prompt, max_retries: int = 5):
+    """llm.invoke를 감싸, 일시 오류(503 등)면 1·2·4·8·16초 간격으로 최대 5번 재시도한다.
+    - 처음 1번 + 재시도 5번 = 총 6번 시도 (최대 ~31초 대기)
+    - 일시 오류가 아니면(잘못된 프롬프트 등) 즉시 예외를 올린다.
+    - 끝까지 실패하면 마지막 예외를 올려 호출부의 except가 처리하게 한다."""
+    last_err = None
+    for attempt in range(max_retries + 1):
+        try:
+            return llm.invoke([HumanMessage(content=prompt)])
+        except Exception as e:
+            last_err = e
+            transient = any(m in str(e) for m in _TRANSIENT_MARKERS)
+            if not transient or attempt == max_retries:
+                raise
+            wait = 2 ** attempt   # 1, 2, 4, 8, 16
+            print(f"      ⏳ 과부하(일시 오류) 재시도 {attempt+1}/{max_retries} — {wait}초 대기 후 재시도")
+            time.sleep(wait)
+    raise last_err
 
 
 SIGUNGU_MAP = {
@@ -193,7 +222,7 @@ JSON 형식으로만 응답 (마크다운 없이):
     }}
   ]
 }}"""
-        response = llm.invoke([HumanMessage(content=prompt)])
+        response = invoke_with_backoff(llm, prompt)
         result = json.loads(response.content.replace("```json","").replace("```","").strip())
 
         for r in result.get("results", []):
@@ -302,7 +331,7 @@ JSON 형식으로만 응답 (마크다운 없이):
     {{"index": {chunk_start+2}, "excluded": false, "reason": "판단 이유"}}
   ]
 }}"""
-            response = llm.invoke([HumanMessage(content=prompt)])
+            response = invoke_with_backoff(llm, prompt)
             result = json.loads(response.content.replace("```json","").replace("```","").strip())
             chunk_results = result.get("results", [])
             all_results.extend(chunk_results)
@@ -816,7 +845,7 @@ JSON 형식으로만 응답 (마크다운 없이):
     }}
   ]
 }}"""
-            response = llm.invoke([HumanMessage(content=prompt)])
+            response = invoke_with_backoff(llm, prompt)
             data = json.loads(response.content.replace("```json", "").replace("```", "").strip())
             for r in data.get("results", []):
                 idx = r.get("index", 0) - 1
@@ -836,6 +865,94 @@ JSON 형식으로만 응답 (마크다운 없이):
         print(f"⚠️ 발급처 URL 검증 오류: {e}")
 
     return result_map
+
+
+# ══════════════════════════════════════════════════════════
+#  중복수혜 AI 감지 + 판별 + 이유 생성 (1차 감지를 AI로, 5개씩 묶음)
+# ══════════════════════════════════════════════════════════
+def llm_detect_and_judge_conflicts(policies: list) -> None:
+    """AI가 정책 원문을 직접 읽고 '중복수혜 불가'를 감지·판별하고 이유까지 한 번에 생성한다.
+    (기존 정규식 1차 감지 + 별도 AI 판별을 하나의 AI 단계로 통합)
+
+    - 대상: 정책명 테이블(CONFLICT_MAP)에서 이미 확정된 정책(conflict_warning 보유)은 제외,
+      나머지 후보 전부의 raw_text/exclude_target을 AI가 읽는다.
+    - is_conflict=true  → conflict_warning + conflict_reason + conflict_source 설정
+    - is_conflict=false → 손대지 않음 (무관/오탐)
+    - LLM 호출 실패 시 정규식(extract_conflict_info)으로 fallback 감지
+    정책 객체를 직접 수정한다(반환값 없음)."""
+    # CONFLICT_MAP에서 이미 확정된 건 다시 감지할 필요 없음
+    targets = [p for p in policies if not p.get("conflict_warning")]
+    if not targets:
+        return
+
+    chunk_size = 5
+    for chunk_start in range(0, len(targets), chunk_size):
+        chunk = targets[chunk_start:chunk_start + chunk_size]
+        policies_text = "\n\n".join([
+            f"[정책{chunk_start+i+1}] {p.get('name','')}\n"
+            f"  분류: {p.get('category','')}\n"
+            f"  정책 원문: {str(p.get('raw_text',''))[:500]}\n"
+            f"  제외 대상: {str(p.get('exclude_target',''))[:600]}"
+            for i, p in enumerate(chunk)
+        ])
+        try:
+            llm = get_llm()
+            prompt = f"""아래 정책들의 원문을 직접 읽고, 각 정책이
+'다른 복지 정책과 동시에 받을 수 없는(정책 간 중복수혜 불가)' 정책인지 판단하세요.
+
+[중요 구분]
+- 진짜 충돌(is_conflict=true): "타 지자체 지원과 중복 불가", "다른 월세 지원을 받으면 제외"처럼
+  '다른 정책/사업'과의 동시 수혜를 막는 경우
+- 가짜·무관(is_conflict=false):
+  · 한 프로그램 안에서 옵션 택1(예: "보드/스키 클래스 중복신청 불가")
+  · 접수·제출 방법 제한 등 '이 사업 내부 규칙'
+  · 중복수혜에 대한 내용이 원문에 아예 없음
+
+[이유(reason) 작성 규칙]
+- 반드시 원문(정책 원문·제외 대상)에 실제로 적힌 중복 제한 문구를 근거로 쓰세요. 원문에 없는 일반론('다른 복지와 중복 불가' 같은 막연한 표현)으로 뭉뚱그리지 마세요.
+- 제외 조건이 여러 개여도, '다른 정책·지원과의 중복 불가'를 가장 먼저, 구체적으로 짚으세요.
+  무엇으로부터의 어떤 지원이 중복 불가인지 원문 표현을 살려 쓰세요.
+  (예: 원문에 "정부(공사·공단·기금 포함) 및 지자체 등으로부터 주택 및 월세 지원을 받은 경우"가 있으면
+   → "정부·지자체 등에서 주택·월세 지원을 받으면 중복 수혜가 불가능해요.")
+- 기초생활수급자·주택소유·합가 등 '대상 자격' 제외는 부차적으로만 덧붙이세요.
+- 관련된 중복 제한이 둘 이상이면 한 문장으로 요약하세요.
+
+[정책 목록]
+{policies_text}
+
+JSON 형식으로만 응답 (마크다운 없이):
+{{
+  "results": [
+    {{
+      "index": {chunk_start+1},
+      "is_conflict": true,
+      "reason": "사용자에게 보여줄 한 문장. 무엇과 왜 중복 불가인지 쉽게. 위 '이유 작성 규칙'을 따르세요. is_conflict=false면 빈 문자열"
+    }}
+  ]
+}}"""
+            response = invoke_with_backoff(llm, prompt)
+            data = json.loads(response.content.replace("```json", "").replace("```", "").strip())
+            for r in data.get("results", []):
+                idx = r.get("index", 0) - 1 - chunk_start
+                if 0 <= idx < len(chunk):
+                    p = chunk[idx]
+                    reason = (r.get("reason", "") or "").strip()
+                    # is_conflict라도 근거(이유)가 비어 있으면 오탐으로 보고 경고를 켜지 않는다.
+                    # (근거 없는 경고 → UI에서 하드코딩 기본문구가 뜨던 문제 차단)
+                    if r.get("is_conflict") and reason:
+                        p["conflict_warning"] = "⚠️ 중복수혜 불가"
+                        p["conflict_reason"] = reason
+                        p["conflict_source"] = "AI 원문 분석"
+            print(f"   ⚖️ 중복수혜 AI 감지+판별 {chunk_start+1}~{chunk_start+len(chunk)}번 완료")
+        except Exception as e:
+            # LLM 실패 → 정규식으로 fallback 감지 (감지만, 이유는 없음)
+            print(f"   ⚠️ AI 중복수혜 감지 실패 ({chunk_start+1}~{chunk_start+len(chunk)}): {e} → 정규식 fallback")
+            for p in chunk:
+                info = extract_conflict_info(str(p.get("raw_text", "")), str(p.get("exclude_target", "")))
+                if info["has_conflict"]:
+                    p["conflict_warning"] = "⚠️ 중복수혜 불가"
+                    p["conflict_text_raw"] = info["conflict_text"]
+                    p["conflict_source"] = "정규식 fallback"
 
 
 # ══════════════════════════════════════════════════════════
@@ -898,7 +1015,7 @@ JSON 형식으로만 응답 (마크다운 없이):
 }}"""
 
     start = time.time()
-    response = llm.invoke([HumanMessage(content=prompt)])
+    response = invoke_with_backoff(llm, prompt)
     return response.content, round(time.time()-start, 2)
 
 
@@ -1037,7 +1154,14 @@ def run_pipeline(user_info: dict) -> dict:
         }
 
     print("\n🔄 중복수혜 체크 중...")
-    checked, optimal = print_conflict_report(unique)
+    # ① 정책명 테이블(CONFLICT_MAP) 기반 확정 충돌 — 외부 제도지식
+    checked = check_conflicts(unique)
+    # ② AI가 원문을 직접 읽고 1차 감지 + 진짜 충돌 판별 + 이유 생성 (정규식 감지 대체)
+    print("⚖️  중복수혜 AI 감지 + 판별 + 이유 생성 중...")
+    llm_detect_and_judge_conflicts(checked)
+    # ③ 최종 충돌 상태 기준으로 동시 수혜 가능한 최적 조합 선택 → 출력
+    optimal = get_optimal_combination(checked)
+    print_conflict_report(checked, optimal)
 
     # 추천된 정책 "전부"의 서류 발급처를 5개씩 묶어 생성 → 각 정책에 부착
     print(f"📄 서류 발급처 생성 중 ({len(checked)}건 → 5개씩 묶음)...")

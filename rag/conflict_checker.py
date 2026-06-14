@@ -1,10 +1,14 @@
 """
-중복수혜 체크 모듈 v3
+중복수혜 체크 모듈 v4
 =========================================
 감지 방식:
-  1. raw_text에서 "중복 불가" 문구 자동 감지
-  2. exclude_target 필드 활용 (새 데이터 구조)
-  3. 정책명 기반 충돌 테이블 (확실한 것만)
+  1. 정책명 기반 충돌 테이블 (CONFLICT_MAP) — 원문에 안 드러나는 외부 제도지식, 확실한 것만
+  2. AI 원문 분석 — rag_pipeline.llm_detect_and_judge_conflicts()가 raw_text/exclude_target을
+     직접 읽고 감지·판별·이유 생성 (정규식 1차 감지를 대체)
+  3. 정규식(extract_conflict_info) — AI 호출 실패 시 fallback 으로만 사용
+
+이 모듈은 LLM에 의존하지 않는다(순수 룰). AI 감지는 rag_pipeline 쪽에서 수행한 뒤
+그 결과(conflict_warning 등)를 정책 객체에 채워 넣는다.
 """
 import re
 
@@ -30,7 +34,9 @@ CONFLICT_MAP = {
 
 
 # ══════════════════════════════════════════════════════════
-#  2. raw_text + exclude_target에서 중복 문구 감지
+#  2. [fallback] raw_text + exclude_target 정규식 감지
+#     평소엔 AI(llm_detect_and_judge_conflicts)가 감지하고,
+#     AI 호출이 실패했을 때만 이 정규식이 대신 감지한다.
 # ══════════════════════════════════════════════════════════
 CONFLICT_PATTERNS = [
     r"타\s*지자체.*(?:지원|사업).*(?:중복|동시).*불가",
@@ -90,7 +96,9 @@ def extract_conflict_info(raw_text: str, exclude_target: str = "") -> dict:
 
 
 # ══════════════════════════════════════════════════════════
-#  3. 충돌 감지
+#  3. 충돌 감지 (정책명 테이블 기반)
+#     ※ 원문 기반 감지는 rag_pipeline의 AI 단계가 담당한다.
+#       호출 순서: check_conflicts() → llm_detect_and_judge_conflicts() → get_optimal_combination()
 # ══════════════════════════════════════════════════════════
 def check_conflicts(policies: list) -> list:
     names = [p["name"] for p in policies]
@@ -100,7 +108,7 @@ def check_conflicts(policies: list) -> list:
         policy["conflict_warning"] = ""
         policy["conflict_source"] = ""
 
-    # A. 정책명 기반
+    # 정책명 기반 (CONFLICT_MAP) — 원문에 안 드러나는 확실한 충돌만
     for policy in policies:
         name = policy["name"]
         if name in CONFLICT_MAP:
@@ -108,21 +116,8 @@ def check_conflicts(policies: list) -> list:
             if conflicts_found:
                 policy["conflict_with"] = conflicts_found
                 policy["conflict_warning"] = f"⚠️ '{conflicts_found[0]}'와 동시 수혜 불가"
+                policy["conflict_reason"] = f"'{conflicts_found[0]}' 사업과는 동시에 받을 수 없어요."
                 policy["conflict_source"] = "정책명 기반"
-
-    # B. raw_text + exclude_target 기반
-    for policy in policies:
-        if policy["conflict_warning"]:
-            continue
-
-        raw_text = policy.get("raw_text", "")
-        exclude_target = policy.get("exclude_target", "")
-        conflict_info = extract_conflict_info(raw_text, exclude_target)
-
-        if conflict_info["has_conflict"]:
-            policy["conflict_warning"] = "⚠️ 중복수혜 불가"
-            policy["conflict_text_raw"] = conflict_info["conflict_text"].strip()
-            policy["conflict_source"] = "raw_text/exclude_target 기반"
 
     return policies
 
@@ -160,10 +155,11 @@ def get_optimal_combination(policies: list) -> list:
 # ══════════════════════════════════════════════════════════
 #  5. 출력
 # ══════════════════════════════════════════════════════════
-def print_conflict_report(policies: list) -> tuple:
-    checked = check_conflicts(policies)
+def print_conflict_report(checked: list, optimal: list) -> None:
+    """충돌/최적 조합 결과를 출력만 한다(계산 X).
+    호출 전에 check_conflicts → AI 감지 → get_optimal_combination 을 끝내고
+    그 결과(checked, optimal)를 넘겨야 한다."""
     conflicts = [p for p in checked if p["conflict_warning"]]
-    optimal = get_optimal_combination(policies)
 
     print(f"\n{'='*55}")
     print("🔄 중복수혜 체크 결과")
@@ -176,14 +172,12 @@ def print_conflict_report(policies: list) -> tuple:
         for p in conflicts:
             print(f"  ⚠️ {p['name'][:40]}")
             print(f"     {p['conflict_warning']}")
-            print(f"     감지: {p['conflict_source']}")
+            print(f"     감지: {p.get('conflict_source','')}")
 
     print(f"\n  최적 조합 ({len(optimal)}건):")
     for i, p in enumerate(optimal, 1):
         print(f"    {i}. [{p.get('fit_score',0):.1f}%] {p['name'][:40]}")
     print(f"{'='*55}\n")
-
-    return checked, optimal
 
 
 if __name__ == "__main__":
@@ -198,4 +192,8 @@ if __name__ == "__main__":
          "amount": "최대 50만원", "raw_text": "이사비 및 부동산 중개수수료 지원.",
          "exclude_target": ""},
     ]
-    checked, optimal = print_conflict_report(test)
+    # 이 모듈 단독 실행 테스트는 정책명 테이블(CONFLICT_MAP) 기반 충돌만 검증한다.
+    # (원문 기반 AI 감지는 rag_pipeline 실행 시에만 동작)
+    checked = check_conflicts(test)
+    optimal = get_optimal_combination(test)
+    print_conflict_report(checked, optimal)
